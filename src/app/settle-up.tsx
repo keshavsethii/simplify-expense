@@ -9,9 +9,9 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
-import { getAllMembers, getAllGroups, getCurrentUser, addSettlement } from '../db/queries';
-import { Member, Group } from '../db/types';
+import { Ionicons } from '@expo/vector-icons';
+import { getAllMembers, getCurrentUser, addSettlement } from '../db/queries';
+import { Member } from '../db/types';
 import { formatMoney, CURRENCY_SYMBOL, CURRENCY_CODE } from '../utils/currency';
 
 export default function SettleUpScreen() {
@@ -26,7 +26,6 @@ export default function SettleUpScreen() {
   }>();
 
   const [members, setMembers] = useState<Member[]>([]);
-  const [currentUser, setCurrentUser] = useState<Member | null>(null);
 
   const [fromMemberId, setFromMemberId] = useState<string>('');
   const [toMemberId, setToMemberId] = useState<string>('');
@@ -38,7 +37,6 @@ export default function SettleUpScreen() {
       const allMems = await getAllMembers();
       const u = await getCurrentUser();
       setMembers(allMems);
-      setCurrentUser(u);
 
       if (params.fromMemberId && params.toMemberId) {
         setFromMemberId(params.fromMemberId);

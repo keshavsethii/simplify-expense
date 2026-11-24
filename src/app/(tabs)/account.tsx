@@ -8,10 +8,14 @@ import {
   TextInput,
   Modal,
   Alert,
+  Platform,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { getCurrentUser, updateCurrentUser } from '../../db/queries';
+import { exportDatabaseBackup, importDatabaseBackup } from '../../db/storage';
 import { Member } from '../../db/types';
 
 export default function AccountScreen() {
@@ -20,6 +24,14 @@ export default function AccountScreen() {
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [selectedColor, setSelectedColor] = useState('#1cc29f');
+
+  // Backup & Restore states
+  const [restoreModalVisible, setRestoreModalVisible] = useState(false);
+  const [restoreJsonInput, setRestoreJsonInput] = useState('');
+  const [viewJsonModalVisible, setViewJsonModalVisible] = useState(false);
+  const [rawJsonContent, setRawJsonContent] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   const avatarColors = [
     '#1cc29f',
@@ -61,6 +73,108 @@ export default function AccountScreen() {
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Failed to update profile');
     }
+  };
+
+  const handleExportBackup = async () => {
+    try {
+      setIsExporting(true);
+      const json = await exportDatabaseBackup();
+
+      if (Platform.OS === 'web') {
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `simplify_backup_${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        Alert.alert('Backup Exported', 'Backup JSON file has been downloaded to your computer.');
+      } else {
+        const filename = `simplify_backup_${new Date().toISOString().slice(0, 10)}.json`;
+        const baseDir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+        const fileUri = `${baseDir}${filename}`;
+        await FileSystem.writeAsStringAsync(fileUri, json, { encoding: FileSystem.EncodingType.UTF8 });
+
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'application/json',
+            dialogTitle: 'Export Simplify Expense Backup',
+            UTI: 'public.json',
+          });
+        } else {
+          setRawJsonContent(json);
+          setViewJsonModalVisible(true);
+        }
+      }
+    } catch (e: any) {
+      Alert.alert('Export Error', e?.message || 'Could not export database backup.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleViewRawJson = async () => {
+    try {
+      const json = await exportDatabaseBackup();
+      setRawJsonContent(json);
+      setViewJsonModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to generate backup JSON.');
+    }
+  };
+
+  const handlePickFileWeb = () => {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,application/json';
+      input.onchange = (e: any) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const text = event.target?.result as string;
+            if (text) setRestoreJsonInput(text);
+          };
+          reader.readAsText(file);
+        }
+      };
+      input.click();
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    if (!restoreJsonInput.trim()) {
+      Alert.alert('Empty Input', 'Please paste your backup JSON first.');
+      return;
+    }
+
+    Alert.alert(
+      'Confirm Restore',
+      'Restoring this backup will replace current records with the data from the backup. Are you sure you want to proceed?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore Now',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setIsRestoring(true);
+              await importDatabaseBackup(restoreJsonInput.trim());
+              await loadUser();
+              setRestoreModalVisible(false);
+              setRestoreJsonInput('');
+              Alert.alert('Success', 'Backup restored successfully! All your groups and expenses have been updated.');
+            } catch (e: any) {
+              Alert.alert('Restore Failed', e?.message || 'Invalid backup data. Please check your JSON format.');
+            } finally {
+              setIsRestoring(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -111,23 +225,72 @@ export default function AccountScreen() {
         </View>
       </View>
 
-      {/* Storage Section */}
+      {/* Backup & Data Section */}
       <View style={styles.section}>
-        <Text style={styles.sectionHeader}>DATA STORAGE</Text>
+        <Text style={styles.sectionHeader}>BACKUP & DATA</Text>
+
+        <TouchableOpacity
+          style={styles.rowClickable}
+          onPress={handleExportBackup}
+          disabled={isExporting}
+        >
+          <View style={styles.rowLeft}>
+            <MaterialCommunityIcons name="cloud-upload-outline" size={22} color="#1cc29f" />
+            <View>
+              <Text style={styles.rowText}>
+                {isExporting ? 'Exporting Backup...' : 'Export Backup (JSON)'}
+              </Text>
+              <Text style={styles.rowSubtext}>Save or share an offline snapshot of your data</Text>
+            </View>
+          </View>
+          <Ionicons name="share-outline" size={18} color="#9CA3AF" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.rowClickable}
+          onPress={() => setRestoreModalVisible(true)}
+        >
+          <View style={styles.rowLeft}>
+            <MaterialCommunityIcons name="cloud-download-outline" size={22} color="#3B82F6" />
+            <View>
+              <Text style={styles.rowText}>Restore from Backup</Text>
+              <Text style={styles.rowSubtext}>Import expenses and groups from backup JSON</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.rowClickable}
+          onPress={handleViewRawJson}
+        >
+          <View style={styles.rowLeft}>
+            <MaterialCommunityIcons name="code-json" size={22} color="#6B7280" />
+            <View>
+              <Text style={styles.rowText}>View Raw Backup Data</Text>
+              <Text style={styles.rowSubtext}>Inspect or copy your database JSON directly</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.rowClickable}
           onPress={() => {
             Alert.alert(
-              'Local Storage',
-              'All groups, expenses, and records are stored directly on your personal device.'
+              'Offline & Local Data',
+              'All members, groups, expenses, and settlements are stored 100% locally on your device. Simplify Expense never uploads your financial data to external servers.'
             );
           }}
         >
           <View style={styles.rowLeft}>
-            <MaterialCommunityIcons name="database-outline" size={22} color="#6B7280" />
-            <Text style={styles.rowText}>Device Storage</Text>
+            <MaterialCommunityIcons name="shield-lock-outline" size={22} color="#10B981" />
+            <View>
+              <Text style={styles.rowText}>Local Device Storage</Text>
+              <Text style={styles.rowSubtext}>100% offline & private</Text>
+            </View>
           </View>
-          <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+          <Ionicons name="information-circle-outline" size={18} color="#9CA3AF" />
         </TouchableOpacity>
       </View>
 
@@ -186,6 +349,104 @@ export default function AccountScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSaveProfile}>
                 <Text style={styles.modalSaveBtnText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Restore Backup Modal */}
+      <Modal visible={restoreModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Restore from Backup</Text>
+              <TouchableOpacity onPress={() => setRestoreModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSubtitle}>
+              Paste your exported JSON database below. Restoring will replace your current records with the data in the backup.
+            </Text>
+
+            {Platform.OS === 'web' && (
+              <TouchableOpacity style={styles.pickFileBtn} onPress={handlePickFileWeb}>
+                <Ionicons name="document-text-outline" size={18} color="#1cc29f" />
+                <Text style={styles.pickFileBtnText}>Upload JSON File from Computer</Text>
+              </TouchableOpacity>
+            )}
+
+            <TextInput
+              style={styles.modalTextArea}
+              value={restoreJsonInput}
+              onChangeText={setRestoreJsonInput}
+              placeholder="Paste backup JSON content here..."
+              placeholderTextColor="#9CA3AF"
+              multiline
+              textAlignVertical="top"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => {
+                  setRestoreModalVisible(false);
+                  setRestoreJsonInput('');
+                }}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.modalSaveBtn,
+                  (!restoreJsonInput.trim() || isRestoring) && styles.modalBtnDisabled,
+                ]}
+                onPress={handleRestoreBackup}
+                disabled={!restoreJsonInput.trim() || isRestoring}
+              >
+                <Text style={styles.modalSaveBtnText}>
+                  {isRestoring ? 'Restoring...' : 'Confirm & Restore'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* View Raw JSON Modal */}
+      <Modal visible={viewJsonModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Raw Backup JSON</Text>
+              <TouchableOpacity onPress={() => setViewJsonModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSubtitle}>
+              This is the raw offline snapshot of your Simplify Expense database.
+            </Text>
+
+            <TextInput
+              style={styles.modalTextArea}
+              value={rawJsonContent}
+              editable={false}
+              multiline
+              textAlignVertical="top"
+              selectTextOnFocus
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalSaveBtn}
+                onPress={() => setViewJsonModalVisible(false)}
+              >
+                <Text style={styles.modalSaveBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -267,11 +528,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flex: 1,
+    marginRight: 8,
   },
   rowText: {
     fontSize: 15,
     fontWeight: '500',
     color: '#374151',
+  },
+  rowSubtext: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
   },
   infoBadge: {
     fontSize: 12,
@@ -386,5 +654,53 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  modalCardLarge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    maxHeight: '85%',
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  pickFileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#E8F8F5',
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  pickFileBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1cc29f',
+  },
+  modalTextArea: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: '#111827',
+    height: 160,
+    backgroundColor: '#F9FAFB',
+    marginBottom: 16,
+  },
+  modalBtnDisabled: {
+    opacity: 0.5,
   },
 });

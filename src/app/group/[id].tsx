@@ -12,7 +12,7 @@ import {
   Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect, Stack } from 'expo-router';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   getGroupById,
   getGroupMembers,
@@ -260,7 +260,7 @@ export default function GroupDetailScreen() {
             <View style={styles.emptyBox}>
               <MaterialCommunityIcons name="receipt-text-outline" size={54} color="#D1D5DB" />
               <Text style={styles.emptyTitle}>No expenses yet</Text>
-              <Text style={styles.emptySub}>Tap '+ Add Expense' below to add your first expense!</Text>
+              <Text style={styles.emptySub}>{"Tap '+ Add Expense' below to add your first expense!"}</Text>
             </View>
           }
         />

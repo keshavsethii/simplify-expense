@@ -1,12 +1,6 @@
 import { Member, SimplifiedDebt } from '../db/types';
 import { CURRENCY_CODE } from './currency';
 
-interface DebtTransaction {
-  fromId: string;
-  toId: string;
-  amount: number;
-}
-
 /**
  * Debt Simplification Algorithm
  * Given members and their net balances (positive = gets back, negative = owes),

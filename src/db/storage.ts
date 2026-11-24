@@ -30,6 +30,56 @@ async function setItem<T>(key: string, value: T): Promise<void> {
   }
 }
 
+export async function exportDatabaseBackup(): Promise<string> {
+  const members = await getItem(STORAGE_KEYS.MEMBERS, []);
+  const groups = await getItem(STORAGE_KEYS.GROUPS, []);
+  const groupMembers = await getItem(STORAGE_KEYS.GROUP_MEMBERS, []);
+  const expenses = await getItem(STORAGE_KEYS.EXPENSES, []);
+  const expenseSplits = await getItem(STORAGE_KEYS.EXPENSE_SPLITS, []);
+  const settlements = await getItem(STORAGE_KEYS.SETTLEMENTS, []);
+  const defaultSplits = await getItem(STORAGE_KEYS.DEFAULT_SPLITS, []);
+
+  const backup = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    data: {
+      members,
+      groups,
+      groupMembers,
+      expenses,
+      expenseSplits,
+      settlements,
+      defaultSplits,
+    },
+  };
+
+  return JSON.stringify(backup, null, 2);
+}
+
+export async function importDatabaseBackup(jsonString: string): Promise<boolean> {
+  try {
+    const backup = JSON.parse(jsonString);
+    if (!backup.data || !backup.data.members) {
+      throw new Error('Invalid backup file format');
+    }
+
+    const { members, groups, groupMembers, expenses, expenseSplits, settlements, defaultSplits } = backup.data;
+
+    await setItem(STORAGE_KEYS.MEMBERS, members || []);
+    await setItem(STORAGE_KEYS.GROUPS, groups || []);
+    await setItem(STORAGE_KEYS.GROUP_MEMBERS, groupMembers || []);
+    await setItem(STORAGE_KEYS.EXPENSES, expenses || []);
+    await setItem(STORAGE_KEYS.EXPENSE_SPLITS, expenseSplits || []);
+    await setItem(STORAGE_KEYS.SETTLEMENTS, settlements || []);
+    await setItem(STORAGE_KEYS.DEFAULT_SPLITS, defaultSplits || []);
+
+    return true;
+  } catch (e) {
+    console.error('Import error:', e);
+    throw e;
+  }
+}
+
 export async function initStorage(): Promise<void> {
   const isInit = await AsyncStorage.getItem(STORAGE_KEYS.INITIALIZED);
   if (isInit) return;

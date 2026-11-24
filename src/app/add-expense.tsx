@@ -11,7 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import {
   getAllMembers,
   getAllGroups,
@@ -123,6 +123,20 @@ export default function AddExpenseScreen() {
 
   const splitStatus = calculateSplitStatus();
 
+  const loadGroupDefaultSplit = async (grpId: string, allMems: Member[]) => {
+    setSelectedMemberIds(allMems.map((m) => m.id));
+    const def = await getDefaultGroupSplit(grpId);
+    if (def) {
+      setSplitType(def.split_type);
+      try {
+        const parsed = JSON.parse(def.splits_json);
+        setCustomValues(parsed);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
   useEffect(() => {
     async function init() {
       const allMems = await getAllMembers();
@@ -171,21 +185,7 @@ export default function AddExpenseScreen() {
       }
     }
     init();
-  }, [params.groupId]);
-
-  const loadGroupDefaultSplit = async (grpId: string, allMems: Member[]) => {
-    setSelectedMemberIds(allMems.map((m) => m.id));
-    const def = await getDefaultGroupSplit(grpId);
-    if (def) {
-      setSplitType(def.split_type);
-      try {
-        const parsed = JSON.parse(def.splits_json);
-        setCustomValues(parsed);
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  };
+  }, [params.groupId, params.expenseId]);
 
   const toggleMemberSelection = (mId: string) => {
     if (selectedMemberIds.includes(mId)) {
@@ -337,7 +337,6 @@ export default function AddExpenseScreen() {
   };
 
   const categories = ['General', 'Groceries', 'Food', 'Utilities', 'Travel', 'Entertainment'];
-  const currencies = ['USD', 'EUR', 'GBP', 'INR', 'CAD', 'AUD'];
 
   return (
     <KeyboardAvoidingView

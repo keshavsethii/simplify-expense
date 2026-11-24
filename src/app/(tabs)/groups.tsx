@@ -6,9 +6,10 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
+  TextInput,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { MaterialCommunityIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
+import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { getAllGroups, getGroupBalances } from '../../db/queries';
 import { Group } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
@@ -22,6 +23,8 @@ export default function GroupsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [groups, setGroups] = useState<GroupCardData[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedType, setSelectedType] = useState<string>('ALL');
 
   const loadGroups = async () => {
     try {
@@ -114,6 +117,14 @@ export default function GroupsScreen() {
     );
   };
 
+  const groupTypes = ['ALL', 'home', 'trip', 'couple', 'other'];
+
+  const filteredGroups = groups.filter((item) => {
+    const matchesSearch = item.group.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesType = selectedType === 'ALL' || item.group.type.toLowerCase() === selectedType.toLowerCase();
+    return matchesSearch && matchesType;
+  });
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -127,8 +138,49 @@ export default function GroupsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Search Bar & Type Chips */}
+      <View style={styles.filterSection}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search" size={18} color="#9CA3AF" />
+          <TextInput
+            placeholder="Search your groups..."
+            placeholderTextColor="#9CA3AF"
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <View style={styles.typeChipsRow}>
+          {groupTypes.map((type) => (
+            <TouchableOpacity
+              key={type}
+              style={[styles.typeChip, selectedType === type && styles.typeChipActive]}
+              onPress={() => setSelectedType(type)}
+            >
+              <Text style={[styles.typeChipText, selectedType === type && styles.typeChipTextActive]}>
+                {type === 'ALL'
+                  ? 'All'
+                  : type === 'home'
+                  ? 'Home'
+                  : type === 'trip'
+                  ? 'Trip'
+                  : type === 'couple'
+                  ? 'Couple'
+                  : 'Other'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
       <FlatList
-        data={groups}
+        data={filteredGroups}
         keyExtractor={(item) => item.group.id}
         renderItem={renderGroupItem}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={loadGroups} colors={['#1cc29f']} />}
@@ -136,9 +188,13 @@ export default function GroupsScreen() {
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <MaterialCommunityIcons name="account-group" size={60} color="#D1D5DB" />
-            <Text style={styles.emptyTitle}>You are not in any groups yet</Text>
+            <Text style={styles.emptyTitle}>
+              {searchQuery || selectedType !== 'ALL' ? 'No groups match your search' : 'You are not in any groups yet'}
+            </Text>
             <Text style={styles.emptySub}>
-              Groups are the easiest way to track expenses for trips, roommates, or events!
+              {searchQuery || selectedType !== 'ALL'
+                ? 'Try clearing your search filters'
+                : 'Groups are the easiest way to track expenses for trips, roommates, or events!'}
             </Text>
           </View>
         }
@@ -179,6 +235,49 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
+  },
+  filterSection: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 38,
+    marginBottom: 8,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#111827',
+  },
+  typeChipsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  typeChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: '#F3F4F6',
+  },
+  typeChipActive: {
+    backgroundColor: '#1cc29f',
+  },
+  typeChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  typeChipTextActive: {
+    color: '#FFFFFF',
   },
   listContent: {
     paddingVertical: 12,

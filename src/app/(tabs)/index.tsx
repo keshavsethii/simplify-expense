@@ -6,7 +6,6 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  StatusBar,
   Alert,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';

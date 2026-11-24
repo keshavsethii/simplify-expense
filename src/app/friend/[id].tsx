@@ -285,7 +285,7 @@ export default function FriendDetailScreen() {
               <Ionicons name="checkmark-done-circle-outline" size={50} color="#D1D5DB" />
               <Text style={styles.emptyTitle}>No payments recorded yet</Text>
               <Text style={styles.emptySub}>
-                Use the "Settle up" button above to record payments between you and {friend.name}!
+                {'Use the "Settle up" button above to record payments between you and ' + friend.name + '!'}
               </Text>
             </View>
           }

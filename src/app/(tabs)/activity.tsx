@@ -7,6 +7,7 @@ import {
   TextInput,
   TouchableOpacity,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -18,9 +19,8 @@ import {
   getSettlements,
   deleteSettlement,
 } from '../../db/queries';
-import { Expense, Member, Group, Settlement } from '../../db/types';
+import { Expense, Settlement } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
-import { Alert } from 'react-native';
 
 type ActivityItem =
   | {

@@ -1,5 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Group, Member, Expense, ExpenseSplit, Settlement, DefaultGroupSplit } from './types';
+import {
+  Group,
+  Member,
+  Expense,
+  ExpenseSplit,
+  Settlement,
+  DefaultGroupSplit,
+  CustomCategory,
+  ExpenseTemplate,
+} from './types';
 
 const STORAGE_KEYS = {
   MEMBERS: 'simplify_members',
@@ -9,6 +18,8 @@ const STORAGE_KEYS = {
   EXPENSE_SPLITS: 'simplify_expense_splits',
   SETTLEMENTS: 'simplify_settlements',
   DEFAULT_SPLITS: 'simplify_default_splits',
+  CUSTOM_CATEGORIES: 'simplify_custom_categories',
+  EXPENSE_TEMPLATES: 'simplify_expense_templates',
   INITIALIZED: 'simplify_db_initialized',
 };
 
@@ -38,6 +49,8 @@ export async function exportDatabaseBackup(): Promise<string> {
   const expenseSplits = await getItem(STORAGE_KEYS.EXPENSE_SPLITS, []);
   const settlements = await getItem(STORAGE_KEYS.SETTLEMENTS, []);
   const defaultSplits = await getItem(STORAGE_KEYS.DEFAULT_SPLITS, []);
+  const customCategories = await getItem(STORAGE_KEYS.CUSTOM_CATEGORIES, []);
+  const expenseTemplates = await getItem(STORAGE_KEYS.EXPENSE_TEMPLATES, []);
 
   const backup = {
     version: 1,
@@ -50,6 +63,8 @@ export async function exportDatabaseBackup(): Promise<string> {
       expenseSplits,
       settlements,
       defaultSplits,
+      customCategories,
+      expenseTemplates,
     },
   };
 
@@ -63,7 +78,17 @@ export async function importDatabaseBackup(jsonString: string): Promise<boolean>
       throw new Error('Invalid backup file format');
     }
 
-    const { members, groups, groupMembers, expenses, expenseSplits, settlements, defaultSplits } = backup.data;
+    const {
+      members,
+      groups,
+      groupMembers,
+      expenses,
+      expenseSplits,
+      settlements,
+      defaultSplits,
+      customCategories,
+      expenseTemplates,
+    } = backup.data;
 
     await setItem(STORAGE_KEYS.MEMBERS, members || []);
     await setItem(STORAGE_KEYS.GROUPS, groups || []);
@@ -72,6 +97,8 @@ export async function importDatabaseBackup(jsonString: string): Promise<boolean>
     await setItem(STORAGE_KEYS.EXPENSE_SPLITS, expenseSplits || []);
     await setItem(STORAGE_KEYS.SETTLEMENTS, settlements || []);
     await setItem(STORAGE_KEYS.DEFAULT_SPLITS, defaultSplits || []);
+    if (customCategories) await setItem(STORAGE_KEYS.CUSTOM_CATEGORIES, customCategories);
+    if (expenseTemplates) await setItem(STORAGE_KEYS.EXPENSE_TEMPLATES, expenseTemplates);
 
     return true;
   } catch (e) {
@@ -348,6 +375,7 @@ export interface AddExpenseParams {
   category: string;
   paidByMemberId: string;
   splitType: Expense['split_type'];
+  payersJson?: string;
   notes?: string;
   splits: {
     memberId: string;
@@ -374,6 +402,7 @@ export async function addExpense(params: AddExpenseParams): Promise<string> {
     category: params.category || 'General',
     paid_by_member_id: params.paidByMemberId,
     split_type: params.splitType,
+    payers_json: params.payersJson,
     notes: params.notes,
     created_at: now,
   };
@@ -406,6 +435,7 @@ export interface UpdateExpenseParams {
   category: string;
   paidByMemberId: string;
   splitType: Expense['split_type'];
+  payersJson?: string;
   notes?: string;
   splits: {
     memberId: string;
@@ -432,6 +462,7 @@ export async function updateExpense(params: UpdateExpenseParams): Promise<void> 
     category: params.category || 'General',
     paid_by_member_id: params.paidByMemberId,
     split_type: params.splitType,
+    payers_json: params.payersJson,
     notes: params.notes,
   };
 
@@ -552,9 +583,22 @@ export async function getGroupBalances(groupId: string): Promise<MemberBalanceIn
     balanceMap[m.id] = 0;
   }
 
-  // 1. Credit payer of each expense
+  // 1. Credit payer(s) of each expense
   for (const exp of expenses) {
-    if (balanceMap[exp.paid_by_member_id] !== undefined) {
+    if (exp.payers_json) {
+      try {
+        const payers: { member_id: string; amount: number }[] = JSON.parse(exp.payers_json);
+        for (const p of payers) {
+          if (balanceMap[p.member_id] !== undefined) {
+            balanceMap[p.member_id] += p.amount;
+          }
+        }
+      } catch {
+        if (balanceMap[exp.paid_by_member_id] !== undefined) {
+          balanceMap[exp.paid_by_member_id] += exp.amount;
+        }
+      }
+    } else if (balanceMap[exp.paid_by_member_id] !== undefined) {
       balanceMap[exp.paid_by_member_id] += exp.amount;
     }
   }
@@ -693,7 +737,40 @@ export async function getOverallUserBalance(): Promise<{
 
   for (const exp of expenses) {
     const expSplits = splitsByExpense[exp.id] || [];
-    if (exp.paid_by_member_id === currentUser.id) {
+    if (exp.payers_json) {
+      try {
+        const payers: { member_id: string; amount: number }[] = JSON.parse(exp.payers_json);
+        const myPaid = payers.find((p) => p.member_id === currentUser.id)?.amount || 0;
+        const mySplit = expSplits.find((s) => s.member_id === currentUser.id)?.amount || 0;
+
+        for (const p of payers) {
+          if (p.member_id !== currentUser.id && balanceMap[p.member_id] !== undefined && exp.amount > 0) {
+            const payerProportion = p.amount / exp.amount;
+            balanceMap[p.member_id] -= mySplit * payerProportion;
+          }
+        }
+        for (const sp of expSplits) {
+          if (sp.member_id !== currentUser.id && balanceMap[sp.member_id] !== undefined && exp.amount > 0) {
+            const myProportion = myPaid / exp.amount;
+            balanceMap[sp.member_id] += sp.amount * myProportion;
+          }
+        }
+      } catch {
+        if (exp.paid_by_member_id === currentUser.id) {
+          for (const sp of expSplits) {
+            if (sp.member_id !== currentUser.id && balanceMap[sp.member_id] !== undefined) {
+              balanceMap[sp.member_id] += sp.amount;
+            }
+          }
+        } else {
+          const payerId = exp.paid_by_member_id;
+          const yourSplit = expSplits.find((s) => s.member_id === currentUser.id);
+          if (yourSplit && balanceMap[payerId] !== undefined) {
+            balanceMap[payerId] -= yourSplit.amount;
+          }
+        }
+      }
+    } else if (exp.paid_by_member_id === currentUser.id) {
       for (const sp of expSplits) {
         if (sp.member_id !== currentUser.id && balanceMap[sp.member_id] !== undefined) {
           balanceMap[sp.member_id] += sp.amount;
@@ -735,4 +812,72 @@ export async function getOverallUserBalance(): Promise<{
     netTotal: Math.round((totalOwedToYou - totalYouOwe) * 100) / 100,
     friendBalances,
   };
+}
+
+// --- Categories Management ---
+const DEFAULT_CATEGORIES: CustomCategory[] = [
+  { name: 'General', color: '#6B7280', icon: 'dots-horizontal-circle-outline', is_default: true },
+  { name: 'Groceries', color: '#10B981', icon: 'cart-outline', is_default: true },
+  { name: 'Food', color: '#F59E0B', icon: 'fast-food-outline', is_default: true },
+  { name: 'Utilities', color: '#3B82F6', icon: 'flash-outline', is_default: true },
+  { name: 'Travel', color: '#8B5CF6', icon: 'airplane-outline', is_default: true },
+  { name: 'Entertainment', color: '#EC4899', icon: 'film-outline', is_default: true },
+];
+
+export async function getAllCategories(): Promise<CustomCategory[]> {
+  const custom = await getItem<CustomCategory[]>(STORAGE_KEYS.CUSTOM_CATEGORIES, []);
+  const map = new Map<string, CustomCategory>();
+  DEFAULT_CATEGORIES.forEach((c) => map.set(c.name.toLowerCase(), c));
+  custom.forEach((c) => map.set(c.name.toLowerCase(), c));
+  return Array.from(map.values());
+}
+
+export async function addCustomCategory(category: {
+  name: string;
+  color: string;
+  icon: string;
+}): Promise<CustomCategory> {
+  const trimmed = category.name.trim();
+  if (!trimmed) throw new Error('Category name cannot be empty');
+  const existing = await getItem<CustomCategory[]>(STORAGE_KEYS.CUSTOM_CATEGORIES, []);
+  const newCat: CustomCategory = {
+    name: trimmed,
+    color: category.color || '#1cc29f',
+    icon: category.icon || 'tag-outline',
+    is_default: false,
+  };
+  const filtered = existing.filter((c) => c.name.toLowerCase() !== trimmed.toLowerCase());
+  filtered.push(newCat);
+  await setItem(STORAGE_KEYS.CUSTOM_CATEGORIES, filtered);
+  return newCat;
+}
+
+export async function deleteCustomCategory(name: string): Promise<void> {
+  const existing = await getItem<CustomCategory[]>(STORAGE_KEYS.CUSTOM_CATEGORIES, []);
+  const filtered = existing.filter((c) => c.name.toLowerCase() !== name.toLowerCase());
+  await setItem(STORAGE_KEYS.CUSTOM_CATEGORIES, filtered);
+}
+
+// --- Expense Templates Management ---
+export async function getAllTemplates(): Promise<ExpenseTemplate[]> {
+  return await getItem<ExpenseTemplate[]>(STORAGE_KEYS.EXPENSE_TEMPLATES, []);
+}
+
+export async function addExpenseTemplate(
+  template: Omit<ExpenseTemplate, 'id'>
+): Promise<ExpenseTemplate> {
+  const templates = await getAllTemplates();
+  const newTemplate: ExpenseTemplate = {
+    id: `template_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    ...template,
+  };
+  templates.push(newTemplate);
+  await setItem(STORAGE_KEYS.EXPENSE_TEMPLATES, templates);
+  return newTemplate;
+}
+
+export async function deleteExpenseTemplate(id: string): Promise<void> {
+  const templates = await getAllTemplates();
+  const updated = templates.filter((t) => t.id !== id);
+  await setItem(STORAGE_KEYS.EXPENSE_TEMPLATES, updated);
 }

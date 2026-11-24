@@ -30,6 +30,7 @@ export interface Expense {
   category: string;
   paid_by_member_id: string;
   split_type: 'EQUAL' | 'EXACT' | 'PERCENT' | 'SHARES';
+  payers_json?: string; // Optional: [{"member_id": "...", "amount": 100}, ...]
   notes?: string;
   created_at: string;
 }
@@ -67,4 +68,21 @@ export interface SimplifiedDebt {
   toMember: Member;
   amount: number;
   currency: string;
+}
+
+export interface CustomCategory {
+  name: string;
+  color: string;
+  icon: string;
+  is_default?: boolean;
+}
+
+export interface ExpenseTemplate {
+  id: string;
+  title: string;
+  description: string;
+  amount: number;
+  category: string;
+  group_id: string | null;
+  split_type: 'EQUAL' | 'EXACT' | 'PERCENT' | 'SHARES';
 }

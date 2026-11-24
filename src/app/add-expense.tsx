@@ -9,6 +9,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,8 +23,12 @@ import {
   getExpenseSplits,
   getDefaultGroupSplit,
   saveDefaultGroupSplit,
+  getAllCategories,
+  getAllTemplates,
+  addExpenseTemplate,
+  deleteExpenseTemplate,
 } from '../db/queries';
-import { Member, Group } from '../db/types';
+import { Member, Group, CustomCategory, ExpenseTemplate } from '../db/types';
 import { formatMoney, CURRENCY_SYMBOL, CURRENCY_CODE } from '../utils/currency';
 
 export default function AddExpenseScreen() {
@@ -51,6 +56,17 @@ export default function AddExpenseScreen() {
   // Unequal values map: memberId -> exact amount / percentage / shares
   const [customValues, setCustomValues] = useState<Record<string, string>>({});
 
+  // Categories & Templates
+  const [categories, setCategories] = useState<CustomCategory[]>([]);
+  const [templates, setTemplates] = useState<ExpenseTemplate[]>([]);
+  const [showTemplatesModal, setShowTemplatesModal] = useState(false);
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
+  const [templateTitle, setTemplateTitle] = useState('');
+
+  // Multi-Payer
+  const [isMultiPayer, setIsMultiPayer] = useState(false);
+  const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({});
+
   const toggleSelectAll = () => {
     if (selectedMemberIds.length === members.length) {
       // Keep only current user
@@ -63,6 +79,77 @@ export default function AddExpenseScreen() {
   };
 
   const parsedTotalAmount = parseFloat(amount) || 0;
+
+  const calculateMultiPayerStatus = () => {
+    if (!isMultiPayer) return { isValid: true, text: '', color: '#1cc29f' };
+    const sum = Object.values(payerAmounts).reduce((acc, val) => acc + (parseFloat(val) || 0), 0);
+    const diff = Math.round((parsedTotalAmount - sum) * 100) / 100;
+    if (Math.abs(diff) < 0.01 && parsedTotalAmount > 0) {
+      return { isValid: true, text: `✓ Total of ${formatMoney(sum)} matches bill`, color: '#1cc29f' };
+    }
+    if (diff > 0) {
+      return { isValid: false, text: `${formatMoney(diff)} remaining to assign`, color: '#EF4444' };
+    }
+    return { isValid: false, text: `${formatMoney(Math.abs(diff))} over total amount`, color: '#EF4444' };
+  };
+
+  const multiPayerStatus = calculateMultiPayerStatus();
+
+  const handleApplyTemplate = (tmpl: ExpenseTemplate) => {
+    setDescription(tmpl.description);
+    setAmount(String(tmpl.amount));
+    setCategory(tmpl.category);
+    setSplitType(tmpl.split_type);
+    if (tmpl.group_id) setSelectedGroupId(tmpl.group_id);
+    setShowTemplatesModal(false);
+  };
+
+  const handleSaveAsTemplate = () => {
+    if (!description.trim() || parsedTotalAmount <= 0) {
+      Alert.alert('Incomplete Form', 'Please enter a description and amount before saving as a template.');
+      return;
+    }
+    setTemplateTitle(description.trim());
+    setShowSaveTemplateModal(true);
+  };
+
+  const handleConfirmSaveTemplate = async () => {
+    if (!templateTitle.trim()) {
+      Alert.alert('Required', 'Please enter a template title.');
+      return;
+    }
+    try {
+      await addExpenseTemplate({
+        title: templateTitle.trim(),
+        description: description.trim(),
+        amount: parsedTotalAmount,
+        category,
+        group_id: selectedGroupId,
+        split_type: splitType,
+      });
+      const updatedTmpls = await getAllTemplates();
+      setTemplates(updatedTmpls);
+      setShowSaveTemplateModal(false);
+      Alert.alert('Template Saved', `"${templateTitle.trim()}" saved for 1-tap entry!`);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to save template');
+    }
+  };
+
+  const handleDeleteTemplate = async (tmplId: string, tmplTitle: string) => {
+    Alert.alert('Delete Template', `Remove template "${tmplTitle}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteExpenseTemplate(tmplId);
+          const updatedTmpls = await getAllTemplates();
+          setTemplates(updatedTmpls);
+        },
+      },
+    ]);
+  };
 
   // Real-time split calculations
   const calculateSplitStatus = () => {
@@ -142,11 +229,15 @@ export default function AddExpenseScreen() {
       const allMems = await getAllMembers();
       const allGrps = await getAllGroups();
       const u = await getCurrentUser();
+      const allCats = await getAllCategories();
+      const allTmpls = await getAllTemplates();
 
       setMembers(allMems);
       setGroups(allGrps);
       setCurrentUser(u);
       setPayerId(u.id);
+      setCategories(allCats);
+      setTemplates(allTmpls);
 
       // If editing existing expense, load its data
       if (params.expenseId) {
@@ -160,6 +251,20 @@ export default function AddExpenseScreen() {
           setSelectedGroupId(existing.group_id);
           setPayerId(existing.paid_by_member_id);
           setSplitType(existing.split_type);
+
+          if (existing.payers_json) {
+            try {
+              const payers: { member_id: string; amount: number }[] = JSON.parse(existing.payers_json);
+              setIsMultiPayer(true);
+              const pMap: Record<string, string> = {};
+              payers.forEach((p) => {
+                pMap[p.member_id] = String(p.amount);
+              });
+              setPayerAmounts(pMap);
+            } catch (e) {
+              console.error(e);
+            }
+          }
 
           const splits = await getExpenseSplits(existing.id);
           setSelectedMemberIds(splits.map((s) => s.member_id));
@@ -297,6 +402,21 @@ export default function AddExpenseScreen() {
       });
     }
 
+    if (isMultiPayer) {
+      if (!multiPayerStatus.isValid) {
+        Alert.alert('Multi-Payer Error', multiPayerStatus.text || 'Assigned payments must match total bill amount.');
+        return;
+      }
+    }
+
+    let payersJson: string | undefined = undefined;
+    if (isMultiPayer) {
+      const payersList = Object.entries(payerAmounts)
+        .map(([mId, amt]) => ({ member_id: mId, amount: parseFloat(amt) || 0 }))
+        .filter((p) => p.amount > 0);
+      payersJson = JSON.stringify(payersList);
+    }
+
     try {
       if (isEditing && params.expenseId) {
         await updateExpense({
@@ -307,8 +427,9 @@ export default function AddExpenseScreen() {
           currency: CURRENCY_CODE,
           date: date.trim() || new Date().toISOString().substring(0, 10),
           category,
-          paidByMemberId: payerId,
+          paidByMemberId: payerId || currentUser?.id || '',
           splitType,
+          payersJson,
           splits,
         });
       } else {
@@ -319,8 +440,9 @@ export default function AddExpenseScreen() {
           currency: CURRENCY_CODE,
           date: date.trim() || new Date().toISOString().substring(0, 10),
           category,
-          paidByMemberId: payerId,
+          paidByMemberId: payerId || currentUser?.id || '',
           splitType,
+          payersJson,
           splits,
         });
       }
@@ -336,8 +458,6 @@ export default function AddExpenseScreen() {
     }
   };
 
-  const categories = ['General', 'Groceries', 'Food', 'Utilities', 'Travel', 'Entertainment'];
-
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -346,6 +466,29 @@ export default function AddExpenseScreen() {
       <ScrollView style={styles.container}>
         {/* Basic Fields */}
         <View style={styles.section}>
+          {/* Template Actions Row */}
+          <View style={styles.topActionRow}>
+            <TouchableOpacity
+              style={styles.templateShortcutBtn}
+              onPress={() => setShowTemplatesModal(true)}
+            >
+              <Ionicons name="flash-outline" size={15} color="#1cc29f" />
+              <Text style={styles.templateShortcutText}>
+                {templates.length > 0 ? `Templates (${templates.length})` : 'Templates'}
+              </Text>
+            </TouchableOpacity>
+
+            {description.trim().length > 0 && parsedTotalAmount > 0 && !isEditing && (
+              <TouchableOpacity
+                style={styles.saveTemplateBtn}
+                onPress={handleSaveAsTemplate}
+              >
+                <Ionicons name="bookmark-outline" size={15} color="#3B82F6" />
+                <Text style={styles.saveTemplateText}>Save as Template</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
           <Text style={styles.label}>With you and: Group or Friends</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
             <TouchableOpacity
@@ -439,21 +582,32 @@ export default function AddExpenseScreen() {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
             {categories.map((cat) => (
               <TouchableOpacity
-                key={cat}
+                key={cat.name}
                 style={[
                   styles.categoryPill,
-                  category === cat && styles.categoryPillActive,
+                  category === cat.name && {
+                    backgroundColor: cat.color || '#1cc29f',
+                    borderColor: cat.color || '#1cc29f',
+                  },
                 ]}
-                onPress={() => setCategory(cat)}
+                onPress={() => setCategory(cat.name)}
               >
-                <Text
-                  style={[
-                    styles.categoryPillText,
-                    category === cat && styles.categoryPillTextActive,
-                  ]}
-                >
-                  {cat}
-                </Text>
+                <View style={styles.catPillInner}>
+                  <View
+                    style={[
+                      styles.catColorDotSmall,
+                      { backgroundColor: category === cat.name ? '#FFFFFF' : cat.color },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.categoryPillText,
+                      category === cat.name && styles.categoryPillTextActive,
+                    ]}
+                  >
+                    {cat.name}
+                  </Text>
+                </View>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -461,28 +615,82 @@ export default function AddExpenseScreen() {
 
         {/* Paid by selector */}
         <View style={styles.section}>
-          <Text style={styles.label}>Paid by</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
-            {members.map((m) => (
-              <TouchableOpacity
-                key={m.id}
+          <View style={styles.splitHeader}>
+            <Text style={styles.label}>Paid by</Text>
+            <TouchableOpacity
+              style={[styles.multiPayerToggleBtn, isMultiPayer && styles.multiPayerToggleBtnActive]}
+              onPress={() => setIsMultiPayer(!isMultiPayer)}
+            >
+              <Ionicons
+                name={isMultiPayer ? 'people' : 'person-outline'}
+                size={14}
+                color={isMultiPayer ? '#FFFFFF' : '#1cc29f'}
+              />
+              <Text
                 style={[
-                  styles.payerPill,
-                  payerId === m.id && styles.payerPillActive,
+                  styles.multiPayerToggleText,
+                  isMultiPayer && styles.multiPayerToggleTextActive,
                 ]}
-                onPress={() => setPayerId(m.id)}
               >
-                <Text
+                {isMultiPayer ? 'Multiple People Paid' : 'Multiple Payers?'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {!isMultiPayer ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
+              {members.map((m) => (
+                <TouchableOpacity
+                  key={m.id}
                   style={[
-                    styles.payerPillText,
-                    payerId === m.id && styles.payerPillTextActive,
+                    styles.payerPill,
+                    payerId === m.id && styles.payerPillActive,
                   ]}
+                  onPress={() => setPayerId(m.id)}
                 >
-                  {m.is_user === 1 ? 'You' : m.name}
+                  <Text
+                    style={[
+                      styles.payerPillText,
+                      payerId === m.id && styles.payerPillTextActive,
+                    ]}
+                  >
+                    {m.is_user === 1 ? 'You' : m.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          ) : (
+            <View style={styles.multiPayerBox}>
+              <Text style={styles.multiPayerSubtitle}>
+                Enter each person&apos;s contribution towards the total bill:
+              </Text>
+              {members.map((m) => (
+                <View key={m.id} style={styles.multiPayerRow}>
+                  <Text style={styles.multiPayerMemberName}>
+                    {m.is_user === 1 ? 'You' : m.name}
+                  </Text>
+                  <View style={styles.multiPayerInputWrap}>
+                    <Text style={styles.multiPayerCurrency}>{CURRENCY_SYMBOL}</Text>
+                    <TextInput
+                      style={styles.multiPayerInput}
+                      placeholder="0.00"
+                      placeholderTextColor="#9CA3AF"
+                      keyboardType="decimal-pad"
+                      value={payerAmounts[m.id] || ''}
+                      onChangeText={(val) =>
+                        setPayerAmounts((prev) => ({ ...prev, [m.id]: val }))
+                      }
+                    />
+                  </View>
+                </View>
+              ))}
+              <View style={styles.multiPayerStatusBox}>
+                <Text style={[styles.multiPayerStatusText, { color: multiPayerStatus.color }]}>
+                  {multiPayerStatus.text}
                 </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Split Mode Selector */}
@@ -633,6 +841,104 @@ export default function AddExpenseScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Templates List Modal */}
+      <Modal visible={showTemplatesModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Expense Templates</Text>
+              <TouchableOpacity onPress={() => setShowTemplatesModal(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSubtitle}>
+              Tap any template to instantly prefill this expense.
+            </Text>
+
+            {templates.length > 0 ? (
+              <ScrollView style={{ maxHeight: 300, marginBottom: 12 }}>
+                {templates.map((tmpl) => (
+                  <View key={tmpl.id} style={styles.templateRow}>
+                    <TouchableOpacity
+                      style={styles.templateRowInfo}
+                      onPress={() => handleApplyTemplate(tmpl)}
+                    >
+                      <Text style={styles.templateRowTitle}>{tmpl.title}</Text>
+                      <Text style={styles.templateRowDesc}>
+                        {tmpl.description} • {tmpl.category}
+                      </Text>
+                      <Text style={styles.templateRowAmount}>
+                        {formatMoney(tmpl.amount)} ({tmpl.split_type})
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.deleteTemplateBtn}
+                      onPress={() => handleDeleteTemplate(tmpl.id, tmpl.title)}
+                    >
+                      <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={styles.emptyTemplatesBox}>
+                <Ionicons name="flash-outline" size={40} color="#D1D5DB" />
+                <Text style={styles.emptyTemplatesText}>
+                  No saved templates yet. Fill out an expense and tap &quot;Save as Template&quot; to reuse it!
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setShowTemplatesModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Save Template Modal */}
+      <Modal visible={showSaveTemplateModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Save as Template</Text>
+            <Text style={styles.modalSubtitle}>
+              Give this template a name for quick 1-tap entry in the future.
+            </Text>
+
+            <Text style={styles.modalLabel}>Template Name</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={templateTitle}
+              onChangeText={setTemplateTitle}
+              placeholder="e.g. WiFi Bill, Apartment Rent, Maid"
+              placeholderTextColor="#9CA3AF"
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setShowSaveTemplateModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalSaveBtn}
+                onPress={handleConfirmSaveTemplate}
+              >
+                <Text style={styles.modalSaveBtnText}>Save Template</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -929,5 +1235,251 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  topActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  templateShortcutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#E8F8F5',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  templateShortcutText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1cc29f',
+  },
+  saveTemplateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  saveTemplateText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#3B82F6',
+  },
+  catPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  catColorDotSmall: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  multiPayerToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E8F8F5',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  multiPayerToggleBtnActive: {
+    backgroundColor: '#1cc29f',
+  },
+  multiPayerToggleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1cc29f',
+  },
+  multiPayerToggleTextActive: {
+    color: '#FFFFFF',
+  },
+  multiPayerBox: {
+    marginTop: 8,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  multiPayerSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 10,
+  },
+  multiPayerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  multiPayerMemberName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  multiPayerInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    width: 120,
+  },
+  multiPayerCurrency: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#6B7280',
+    marginRight: 4,
+  },
+  multiPayerInput: {
+    flex: 1,
+    height: 36,
+    fontSize: 14,
+    color: '#111827',
+    textAlign: 'right',
+  },
+  multiPayerStatusBox: {
+    marginTop: 6,
+    padding: 6,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  multiPayerStatusText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+  },
+  modalCardLarge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    maxHeight: '85%',
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  templateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  templateRowInfo: {
+    flex: 1,
+  },
+  templateRowTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  templateRowDesc: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  templateRowAmount: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1cc29f',
+    marginTop: 2,
+  },
+  deleteTemplateBtn: {
+    padding: 6,
+    marginLeft: 8,
+  },
+  emptyTemplatesBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 30,
+  },
+  emptyTemplatesText: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 18,
+    paddingHorizontal: 20,
+  },
+  modalLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#111827',
+    marginBottom: 16,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  modalCancelBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  modalCancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  modalSaveBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#1cc29f',
+  },
+  modalSaveBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

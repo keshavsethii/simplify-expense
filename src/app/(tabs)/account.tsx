@@ -14,9 +14,15 @@ import { useFocusEffect } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { getCurrentUser, updateCurrentUser } from '../../db/queries';
+import {
+  getCurrentUser,
+  updateCurrentUser,
+  getAllCategories,
+  addCustomCategory,
+  deleteCustomCategory,
+} from '../../db/queries';
 import { exportDatabaseBackup, importDatabaseBackup } from '../../db/storage';
-import { Member } from '../../db/types';
+import { Member, CustomCategory } from '../../db/types';
 
 export default function AccountScreen() {
   const [user, setUser] = useState<Member | null>(null);
@@ -32,6 +38,53 @@ export default function AccountScreen() {
   const [rawJsonContent, setRawJsonContent] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+
+  // Categories states
+  const [categoriesModalVisible, setCategoriesModalVisible] = useState(false);
+  const [categoriesList, setCategoriesList] = useState<CustomCategory[]>([]);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatColor, setNewCatColor] = useState('#1cc29f');
+
+  const loadCategories = async () => {
+    try {
+      const cats = await getAllCategories();
+      setCategoriesList(cats);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCatName.trim()) {
+      Alert.alert('Required', 'Please enter a category name');
+      return;
+    }
+    try {
+      await addCustomCategory({
+        name: newCatName.trim(),
+        color: newCatColor,
+        icon: 'tag-outline',
+      });
+      setNewCatName('');
+      await loadCategories();
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to add category');
+    }
+  };
+
+  const handleDeleteCategory = async (name: string) => {
+    Alert.alert('Delete Category', `Remove "${name}" category?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteCustomCategory(name);
+          await loadCategories();
+        },
+      },
+    ]);
+  };
 
   const avatarColors = [
     '#1cc29f',
@@ -223,6 +276,23 @@ export default function AccountScreen() {
           </View>
           <Text style={styles.infoBadge}>Offline & Ad-Free</Text>
         </View>
+
+        <TouchableOpacity
+          style={styles.rowClickable}
+          onPress={() => {
+            loadCategories();
+            setCategoriesModalVisible(true);
+          }}
+        >
+          <View style={styles.rowLeft}>
+            <Ionicons name="pricetags-outline" size={22} color="#1cc29f" />
+            <View>
+              <Text style={styles.rowText}>Manage Categories</Text>
+              <Text style={styles.rowSubtext}>Custom expense categories & colors</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+        </TouchableOpacity>
       </View>
 
       {/* Backup & Data Section */}
@@ -447,6 +517,88 @@ export default function AccountScreen() {
                 onPress={() => setViewJsonModalVisible(false)}
               >
                 <Text style={styles.modalSaveBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Categories Management Modal */}
+      <Modal visible={categoriesModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Manage Categories</Text>
+              <TouchableOpacity onPress={() => setCategoriesModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSubtitle}>
+              Create custom categories for your expenses. These appear in Add Expense and Analytics.
+            </Text>
+
+            {/* Existing Categories List */}
+            <ScrollView style={{ maxHeight: 200, marginBottom: 12 }}>
+              {categoriesList.map((cat) => (
+                <View key={cat.name} style={styles.categoryRowItem}>
+                  <View style={styles.categoryRowLeft}>
+                    <View style={[styles.catColorDot, { backgroundColor: cat.color }]} />
+                    <Text style={styles.categoryRowName}>{cat.name}</Text>
+                    {cat.is_default && (
+                      <Text style={styles.defaultBadge}>Default</Text>
+                    )}
+                  </View>
+                  {!cat.is_default && (
+                    <TouchableOpacity
+                      onPress={() => handleDeleteCategory(cat.name)}
+                      style={styles.deleteCatBtn}
+                    >
+                      <Ionicons name="trash-outline" size={16} color="#EF4444" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+
+            {/* Add New Category Form */}
+            <View style={styles.addCategoryCard}>
+              <Text style={styles.inputLabel}>New Category Name</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={newCatName}
+                onChangeText={setNewCatName}
+                placeholder="e.g. Fuel, Rent, Subscriptions"
+                placeholderTextColor="#9CA3AF"
+              />
+
+              <Text style={styles.inputLabel}>Category Color</Text>
+              <View style={styles.colorPalette}>
+                {avatarColors.map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[
+                      styles.colorDot,
+                      { backgroundColor: c },
+                      newCatColor === c && styles.colorDotSelected,
+                    ]}
+                    onPress={() => setNewCatColor(c)}
+                  />
+                ))}
+              </View>
+
+              <TouchableOpacity style={styles.addCatBtn} onPress={handleAddCategory}>
+                <Ionicons name="add" size={18} color="#FFFFFF" />
+                <Text style={styles.addCatBtnText}>Add Category</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.modalButtons, { marginTop: 12 }]}>
+              <TouchableOpacity
+                style={styles.modalSaveBtn}
+                onPress={() => setCategoriesModalVisible(false)}
+              >
+                <Text style={styles.modalSaveBtnText}>Done</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -702,5 +854,62 @@ const styles = StyleSheet.create({
   },
   modalBtnDisabled: {
     opacity: 0.5,
+  },
+  categoryRowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  categoryRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  catColorDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  categoryRowName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  defaultBadge: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    fontWeight: '600',
+  },
+  deleteCatBtn: {
+    padding: 4,
+  },
+  addCategoryCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  addCatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1cc29f',
+    paddingVertical: 9,
+    borderRadius: 8,
+    gap: 6,
+    marginTop: 4,
+  },
+  addCatBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
   },
 });

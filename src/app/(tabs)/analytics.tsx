@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { getExpenses, getCurrentUser, getExpenseSplits } from '../../db/queries';
+import { getExpenses, getCurrentUser, getExpenseSplits, getAllCategories } from '../../db/queries';
 import { formatMoney } from '../../utils/currency';
 
 interface CategorySpend {
@@ -54,6 +54,11 @@ export default function AnalyticsScreen() {
       setLoading(true);
       const user = await getCurrentUser();
       const allExpenses = await getExpenses();
+      const customCats = await getAllCategories();
+      const colorsMap: Record<string, string> = { ...CATEGORY_COLORS };
+      customCats.forEach((c) => {
+        colorsMap[c.name] = c.color;
+      });
 
       let overallUserShare = 0;
       let monthUserShare = 0;
@@ -91,7 +96,7 @@ export default function AnalyticsScreen() {
           category: cat,
           total: Math.round(catAmount * 100) / 100,
           percentage: Math.round(pct * 10) / 10,
-          color: CATEGORY_COLORS[cat] || '#9CA3AF',
+          color: colorsMap[cat] || '#9CA3AF',
         };
       });
 

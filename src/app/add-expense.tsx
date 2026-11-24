@@ -17,6 +17,9 @@ import {
   getAllGroups,
   getCurrentUser,
   addExpense,
+  updateExpense,
+  getExpenses,
+  getExpenseSplits,
   getDefaultGroupSplit,
   saveDefaultGroupSplit,
 } from '../db/queries';
@@ -25,7 +28,9 @@ import { formatMoney, CURRENCY_SYMBOL, CURRENCY_CODE } from '../utils/currency';
 
 export default function AddExpenseScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ groupId?: string }>();
+  const params = useLocalSearchParams<{ groupId?: string; expenseId?: string }>();
+
+  const isEditing = !!params.expenseId;
 
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
@@ -128,6 +133,33 @@ export default function AddExpenseScreen() {
       setGroups(allGrps);
       setCurrentUser(u);
       setPayerId(u.id);
+
+      // If editing existing expense, load its data
+      if (params.expenseId) {
+        const allExpenses = await getExpenses();
+        const existing = allExpenses.find((e) => e.id === params.expenseId);
+        if (existing) {
+          setDescription(existing.description);
+          setAmount(String(existing.amount));
+          setDate(existing.date);
+          setCategory(existing.category || 'General');
+          setSelectedGroupId(existing.group_id);
+          setPayerId(existing.paid_by_member_id);
+          setSplitType(existing.split_type);
+
+          const splits = await getExpenseSplits(existing.id);
+          setSelectedMemberIds(splits.map((s) => s.member_id));
+
+          const vals: Record<string, string> = {};
+          splits.forEach((s) => {
+            if (existing.split_type === 'EXACT') vals[s.member_id] = String(s.amount);
+            else if (existing.split_type === 'PERCENT') vals[s.member_id] = String(s.percentage || '');
+            else if (existing.split_type === 'SHARES') vals[s.member_id] = String(s.shares || '1');
+          });
+          setCustomValues(vals);
+          return;
+        }
+      }
 
       // If groupId provided, filter to group members
       if (params.groupId) {
@@ -266,17 +298,32 @@ export default function AddExpenseScreen() {
     }
 
     try {
-      await addExpense({
-        groupId: selectedGroupId,
-        description: description.trim(),
-        amount: parsedAmount,
-        currency: CURRENCY_CODE,
-        date: date.trim() || new Date().toISOString().substring(0, 10),
-        category,
-        paidByMemberId: payerId,
-        splitType,
-        splits,
-      });
+      if (isEditing && params.expenseId) {
+        await updateExpense({
+          id: params.expenseId,
+          groupId: selectedGroupId,
+          description: description.trim(),
+          amount: parsedAmount,
+          currency: CURRENCY_CODE,
+          date: date.trim() || new Date().toISOString().substring(0, 10),
+          category,
+          paidByMemberId: payerId,
+          splitType,
+          splits,
+        });
+      } else {
+        await addExpense({
+          groupId: selectedGroupId,
+          description: description.trim(),
+          amount: parsedAmount,
+          currency: CURRENCY_CODE,
+          date: date.trim() || new Date().toISOString().substring(0, 10),
+          category,
+          paidByMemberId: payerId,
+          splitType,
+          splits,
+        });
+      }
 
       // If user is in group and wants to save this as default split rule (Pro feature)
       if (selectedGroupId && (splitType === 'PERCENT' || splitType === 'SHARES')) {
@@ -583,7 +630,7 @@ export default function AddExpenseScreen() {
             onPress={handleSaveExpense}
           >
             <Ionicons name="checkmark" size={20} color="#FFFFFF" />
-            <Text style={styles.saveBtnText}>Save Expense</Text>
+            <Text style={styles.saveBtnText}>{isEditing ? 'Update Expense' : 'Save Expense'}</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

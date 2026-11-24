@@ -83,9 +83,21 @@ export default function ExpenseDetailScreen() {
         options={{
           title: 'Expense Details',
           headerRight: () => (
-            <TouchableOpacity onPress={handleDelete}>
-              <Ionicons name="trash-outline" size={22} color="#EF4444" />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  router.push({
+                    pathname: '/add-expense',
+                    params: { expenseId: expense.id },
+                  });
+                }}
+              >
+                <Ionicons name="pencil-outline" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleDelete}>
+                <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              </TouchableOpacity>
+            </View>
           ),
         }}
       />

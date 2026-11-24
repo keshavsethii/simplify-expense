@@ -334,6 +334,63 @@ export async function addExpense(params: AddExpenseParams): Promise<string> {
   return expenseId;
 }
 
+export interface UpdateExpenseParams {
+  id: string;
+  groupId: string | null;
+  description: string;
+  amount: number;
+  currency: string;
+  date: string;
+  category: string;
+  paidByMemberId: string;
+  splitType: Expense['split_type'];
+  notes?: string;
+  splits: {
+    memberId: string;
+    amount: number;
+    percentage?: number;
+    shares?: number;
+  }[];
+}
+
+export async function updateExpense(params: UpdateExpenseParams): Promise<void> {
+  const expenses = await getItem<Expense[]>(STORAGE_KEYS.EXPENSES, []);
+  const allSplits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);
+
+  const idx = expenses.findIndex((e) => e.id === params.id);
+  if (idx === -1) throw new Error('Expense not found');
+
+  expenses[idx] = {
+    ...expenses[idx],
+    group_id: params.groupId || null,
+    description: params.description,
+    amount: params.amount,
+    currency: params.currency,
+    date: params.date,
+    category: params.category || 'General',
+    paid_by_member_id: params.paidByMemberId,
+    split_type: params.splitType,
+    notes: params.notes,
+  };
+
+  await setItem(STORAGE_KEYS.EXPENSES, expenses);
+
+  // Replace splits for this expense
+  const otherSplits = allSplits.filter((s) => s.expense_id !== params.id);
+  for (const s of params.splits) {
+    otherSplits.push({
+      id: 'split_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      expense_id: params.id,
+      member_id: s.memberId,
+      amount: s.amount,
+      percentage: s.percentage,
+      shares: s.shares,
+    });
+  }
+
+  await setItem(STORAGE_KEYS.EXPENSE_SPLITS, otherSplits);
+}
+
 export async function deleteExpense(expenseId: string): Promise<void> {
   const expenses = await getItem<Expense[]>(STORAGE_KEYS.EXPENSES, []);
   const allSplits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);

@@ -29,6 +29,7 @@ export default function AddExpenseScreen() {
 
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().substring(0, 10));
   const [category, setCategory] = useState('General');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(params.groupId || null);
 
@@ -270,7 +271,7 @@ export default function AddExpenseScreen() {
         description: description.trim(),
         amount: parsedAmount,
         currency: CURRENCY_CODE,
-        date: new Date().toISOString().substring(0, 10),
+        date: date.trim() || new Date().toISOString().substring(0, 10),
         category,
         paidByMemberId: payerId,
         splitType,
@@ -364,6 +365,25 @@ export default function AddExpenseScreen() {
               value={amount}
               onChangeText={setAmount}
             />
+          </View>
+
+          {/* Date Selector Row */}
+          <View style={styles.dateInputRow}>
+            <Ionicons name="calendar-outline" size={18} color="#6B7280" />
+            <Text style={styles.dateLabel}>Date:</Text>
+            <TextInput
+              style={styles.dateInput}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor="#9CA3AF"
+              value={date}
+              onChangeText={setDate}
+            />
+            <TouchableOpacity
+              style={styles.todayBtn}
+              onPress={() => setDate(new Date().toISOString().substring(0, 10))}
+            >
+              <Text style={styles.todayBtnText}>Today</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -654,6 +674,40 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#111827',
     marginLeft: 14,
+  },
+  dateInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 10,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  dateLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  dateInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '700',
+  },
+  todayBtn: {
+    backgroundColor: '#E8F8F5',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  todayBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1cc29f',
   },
   categoryPill: {
     paddingHorizontal: 12,

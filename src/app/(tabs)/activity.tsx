@@ -27,6 +27,7 @@ export default function ActivityScreen() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [timeFilter, setTimeFilter] = useState<'ALL' | 'MONTH' | 'WEEK'>('ALL');
   const [expenses, setExpenses] = useState<ExpenseItemWithDetails[]>([]);
 
   const loadData = async () => {
@@ -88,6 +89,10 @@ export default function ActivityScreen() {
 
   const categories = ['ALL', 'General', 'Food', 'Groceries', 'Utilities', 'Travel', 'Entertainment'];
 
+  const now = new Date();
+  const currentMonthStr = now.toISOString().substring(0, 7);
+  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+
   const filteredExpenses = expenses.filter((item) => {
     const matchesSearch =
       item.expense.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -98,7 +103,14 @@ export default function ActivityScreen() {
       selectedCategory === 'ALL' ||
       item.expense.category?.toLowerCase() === selectedCategory.toLowerCase();
 
-    return matchesSearch && matchesCategory;
+    let matchesTime = true;
+    if (timeFilter === 'MONTH') {
+      matchesTime = item.expense.date.startsWith(currentMonthStr);
+    } else if (timeFilter === 'WEEK') {
+      matchesTime = item.expense.date >= oneWeekAgo;
+    }
+
+    return matchesSearch && matchesCategory && matchesTime;
   });
 
   const getCategoryIcon = (category: string) => {
@@ -136,6 +148,29 @@ export default function ActivityScreen() {
               <Ionicons name="close-circle" size={18} color="#9CA3AF" />
             </TouchableOpacity>
           )}
+        </View>
+
+        {/* Time Filter Tabs */}
+        <View style={styles.timeFilterRow}>
+          {(['ALL', 'MONTH', 'WEEK'] as const).map((t) => (
+            <TouchableOpacity
+              key={t}
+              style={[
+                styles.timeChip,
+                timeFilter === t && styles.timeChipActive,
+              ]}
+              onPress={() => setTimeFilter(t)}
+            >
+              <Text
+                style={[
+                  styles.timeChipText,
+                  timeFilter === t && styles.timeChipTextActive,
+                ]}
+              >
+                {t === 'ALL' ? 'All Time' : t === 'MONTH' ? 'This Month' : 'Past 7 Days'}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* Filter Pills */}
@@ -258,6 +293,30 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 15,
     color: '#1F2937',
+  },
+  timeFilterRow: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 10,
+    gap: 8,
+  },
+  timeChip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  timeChipActive: {
+    backgroundColor: '#1cc29f',
+  },
+  timeChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  timeChipTextActive: {
+    color: '#FFFFFF',
   },
   filterList: {
     paddingHorizontal: 16,

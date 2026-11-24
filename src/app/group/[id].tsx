@@ -271,20 +271,41 @@ export default function GroupDetailScreen() {
             {simplifiedDebtsList.length > 0 ? (
               <View style={styles.transList}>
                 {simplifiedDebtsList.map((debt, index) => (
-                  <View key={index} style={styles.transRow}>
-                    <Text style={styles.transPayer}>
-                      {debt.fromMember.is_user === 1 ? 'You' : debt.fromMember.name}
-                    </Text>
-                    <View style={styles.transArrow}>
-                      <Text style={styles.arrowLabel}>pays</Text>
-                      <Ionicons name="arrow-forward" size={16} color="#9CA3AF" />
+                  <View key={index} style={styles.transCard}>
+                    <View style={styles.transRow}>
+                      <Text style={styles.transPayer}>
+                        {debt.fromMember.is_user === 1 ? 'You' : debt.fromMember.name}
+                      </Text>
+                      <View style={styles.transArrow}>
+                        <Text style={styles.arrowLabel}>pays</Text>
+                        <Ionicons name="arrow-forward" size={16} color="#9CA3AF" />
+                      </View>
+                      <Text style={styles.transReceiver}>
+                        {debt.toMember.is_user === 1 ? 'You' : debt.toMember.name}
+                      </Text>
+                      <Text style={styles.transAmount}>
+                        {formatMoney(debt.amount, debt.currency)}
+                      </Text>
                     </View>
-                    <Text style={styles.transReceiver}>
-                      {debt.toMember.is_user === 1 ? 'You' : debt.toMember.name}
-                    </Text>
-                    <Text style={styles.transAmount}>
-                      {formatMoney(debt.amount, debt.currency)}
-                    </Text>
+
+                    <TouchableOpacity
+                      style={styles.transSettleBtn}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        router.push({
+                          pathname: '/settle-up',
+                          params: {
+                            groupId: group?.id,
+                            fromMemberId: debt.fromMember.id,
+                            toMemberId: debt.toMember.id,
+                            amount: String(debt.amount),
+                          },
+                        });
+                      }}
+                    >
+                      <Ionicons name="checkmark-done" size={14} color="#1cc29f" />
+                      <Text style={styles.transSettleBtnText}>Settle this payment</Text>
+                    </TouchableOpacity>
                   </View>
                 ))}
               </View>
@@ -562,14 +583,17 @@ const styles = StyleSheet.create({
   transList: {
     gap: 12,
   },
+  transCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
   transRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
     padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
   },
   transPayer: {
     fontSize: 14,
@@ -598,6 +622,21 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#1cc29f',
     marginLeft: 10,
+  },
+  transSettleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    backgroundColor: '#E8F8F5',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  transSettleBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1cc29f',
   },
   allSettledBox: {
     alignItems: 'center',

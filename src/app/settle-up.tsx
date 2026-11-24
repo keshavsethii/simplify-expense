@@ -16,14 +16,21 @@ import { formatMoney, CURRENCY_SYMBOL, CURRENCY_CODE } from '../utils/currency';
 
 export default function SettleUpScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ groupId?: string; friendId?: string; friendName?: string }>();
+  const params = useLocalSearchParams<{
+    groupId?: string;
+    friendId?: string;
+    friendName?: string;
+    fromMemberId?: string;
+    toMemberId?: string;
+    amount?: string;
+  }>();
 
   const [members, setMembers] = useState<Member[]>([]);
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
 
   const [fromMemberId, setFromMemberId] = useState<string>('');
   const [toMemberId, setToMemberId] = useState<string>('');
-  const [amount, setAmount] = useState<string>('');
+  const [amount, setAmount] = useState<string>(params.amount || '');
   const [notes, setNotes] = useState<string>('');
 
   useEffect(() => {
@@ -33,8 +40,10 @@ export default function SettleUpScreen() {
       setMembers(allMems);
       setCurrentUser(u);
 
-      if (params.friendId) {
-        // Default: You pay friend or Friend pays you
+      if (params.fromMemberId && params.toMemberId) {
+        setFromMemberId(params.fromMemberId);
+        setToMemberId(params.toMemberId);
+      } else if (params.friendId) {
         setFromMemberId(u.id);
         setToMemberId(params.friendId);
       } else {
@@ -44,7 +53,7 @@ export default function SettleUpScreen() {
       }
     }
     init();
-  }, [params.friendId]);
+  }, [params.friendId, params.fromMemberId, params.toMemberId]);
 
   const handleSettle = async () => {
     const parsedAmount = parseFloat(amount);

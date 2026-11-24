@@ -45,6 +45,78 @@ export default function AddExpenseScreen() {
   // Unequal values map: memberId -> exact amount / percentage / shares
   const [customValues, setCustomValues] = useState<Record<string, string>>({});
 
+  const toggleSelectAll = () => {
+    if (selectedMemberIds.length === members.length) {
+      // Keep only current user
+      if (currentUser) {
+        setSelectedMemberIds([currentUser.id]);
+      }
+    } else {
+      setSelectedMemberIds(members.map((m) => m.id));
+    }
+  };
+
+  const parsedTotalAmount = parseFloat(amount) || 0;
+
+  // Real-time split calculations
+  const calculateSplitStatus = () => {
+    if (splitType === 'EQUAL') {
+      const count = selectedMemberIds.length;
+      const perPerson = count > 0 ? parsedTotalAmount / count : 0;
+      return {
+        isValid: count > 0 && parsedTotalAmount > 0,
+        text: count > 0 ? `${formatMoney(perPerson)} / person (${count} people)` : 'Select members',
+        statusColor: '#1cc29f',
+      };
+    }
+
+    if (splitType === 'EXACT') {
+      let sum = 0;
+      selectedMemberIds.forEach((mId) => {
+        sum += parseFloat(customValues[mId] || '0') || 0;
+      });
+      const diff = Math.round((parsedTotalAmount - sum) * 100) / 100;
+      if (Math.abs(diff) < 0.01) {
+        return { isValid: true, text: `✓ Exactly ${formatMoney(parsedTotalAmount)} allocated`, statusColor: '#1cc29f' };
+      } else if (diff > 0) {
+        return { isValid: false, text: `${formatMoney(diff)} remaining to assign`, statusColor: '#F59E0B' };
+      } else {
+        return { isValid: false, text: `${formatMoney(Math.abs(diff))} over assigned!`, statusColor: '#EF4444' };
+      }
+    }
+
+    if (splitType === 'PERCENT') {
+      let totalPct = 0;
+      selectedMemberIds.forEach((mId) => {
+        totalPct += parseFloat(customValues[mId] || '0') || 0;
+      });
+      const diff = Math.round((100 - totalPct) * 10) / 10;
+      if (Math.abs(diff) < 0.01) {
+        return { isValid: true, text: `✓ 100% fully allocated`, statusColor: '#1cc29f' };
+      } else if (diff > 0) {
+        return { isValid: false, text: `${diff}% remaining (Total: ${totalPct}%)`, statusColor: '#F59E0B' };
+      } else {
+        return { isValid: false, text: `${Math.abs(diff)}% over 100%!`, statusColor: '#EF4444' };
+      }
+    }
+
+    if (splitType === 'SHARES') {
+      let totalShares = 0;
+      selectedMemberIds.forEach((mId) => {
+        totalShares += parseFloat(customValues[mId] || '1') || 0;
+      });
+      return {
+        isValid: totalShares > 0 && parsedTotalAmount > 0,
+        text: totalShares > 0 ? `Total: ${totalShares} shares` : 'Enter shares',
+        statusColor: '#1cc29f',
+      };
+    }
+
+    return { isValid: true, text: '', statusColor: '#1cc29f' };
+  };
+
+  const splitStatus = calculateSplitStatus();
+
   useEffect(() => {
     async function init() {
       const allMems = await getAllMembers();
@@ -351,6 +423,11 @@ export default function AddExpenseScreen() {
         <View style={styles.section}>
           <View style={styles.splitHeader}>
             <Text style={styles.label}>Split Options</Text>
+            <TouchableOpacity onPress={toggleSelectAll} style={styles.selectAllBtn}>
+              <Text style={styles.selectAllText}>
+                {selectedMemberIds.length === members.length ? 'Deselect all' : 'Select all'}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.splitTypeButtons}>
@@ -383,10 +460,46 @@ export default function AddExpenseScreen() {
             ))}
           </View>
 
+          {/* Real-time Status Banner */}
+          {parsedTotalAmount > 0 && (
+            <View style={[styles.statusBanner, { borderColor: splitStatus.statusColor }]}>
+              <Ionicons
+                name={splitStatus.isValid ? 'checkmark-circle' : 'alert-circle'}
+                size={16}
+                color={splitStatus.statusColor}
+              />
+              <Text style={[styles.statusBannerText, { color: splitStatus.statusColor }]}>
+                {splitStatus.text}
+              </Text>
+            </View>
+          )}
+
           {/* Members Split Breakdown */}
           <View style={styles.splitMembersList}>
             {members.map((m) => {
               const isSelected = selectedMemberIds.includes(m.id);
+
+              // Calculated share preview for visual clarity
+              let previewText = '';
+              if (isSelected && parsedTotalAmount > 0) {
+                if (splitType === 'EQUAL') {
+                  const perPerson = parsedTotalAmount / selectedMemberIds.length;
+                  previewText = formatMoney(perPerson);
+                } else if (splitType === 'PERCENT') {
+                  const pct = parseFloat(customValues[m.id] || '0') || 0;
+                  const amt = (parsedTotalAmount * pct) / 100;
+                  previewText = formatMoney(amt);
+                } else if (splitType === 'SHARES') {
+                  let totalShares = 0;
+                  selectedMemberIds.forEach((id) => {
+                    totalShares += parseFloat(customValues[id] || '1') || 0;
+                  });
+                  const sh = parseFloat(customValues[m.id] || '1') || 0;
+                  const amt = totalShares > 0 ? (parsedTotalAmount * sh) / totalShares : 0;
+                  previewText = formatMoney(amt);
+                }
+              }
+
               return (
                 <View key={m.id} style={styles.memberSplitRow}>
                   <TouchableOpacity
@@ -398,9 +511,14 @@ export default function AddExpenseScreen() {
                       size={22}
                       color={isSelected ? '#1cc29f' : '#9CA3AF'}
                     />
-                    <Text style={styles.memberSplitName}>
-                      {m.is_user === 1 ? 'You' : m.name}
-                    </Text>
+                    <View>
+                      <Text style={styles.memberSplitName}>
+                        {m.is_user === 1 ? 'You' : m.name}
+                      </Text>
+                      {previewText !== '' && (
+                        <Text style={styles.memberPreviewText}>owes {previewText}</Text>
+                      )}
+                    </View>
                   </TouchableOpacity>
 
                   {/* Input for custom splits */}
@@ -577,20 +695,39 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 6,
   },
-  proTag: {
+  selectAllBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#F3F4F6',
+  },
+  selectAllText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1cc29f',
+  },
+  statusBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: '#FAFAFA',
+    marginBottom: 12,
+    gap: 6,
   },
-  proTagText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#B45309',
+  statusBannerText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  memberPreviewText: {
+    fontSize: 12,
+    color: '#1cc29f',
+    fontWeight: '600',
+    marginTop: 2,
   },
   splitTypeButtons: {
     flexDirection: 'row',

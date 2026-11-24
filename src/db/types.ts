@@ -4,6 +4,7 @@ export interface Group {
   type: 'home' | 'trip' | 'couple' | 'other';
   currency: string;
   simplify_debts: number; // 1 or 0
+  is_archived?: number; // 1 or 0
   created_at: string;
 }
 

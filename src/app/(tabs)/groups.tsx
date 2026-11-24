@@ -25,6 +25,7 @@ export default function GroupsScreen() {
   const [groups, setGroups] = useState<GroupCardData[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ACTIVE' | 'SETTLED' | 'ARCHIVED' | 'ALL'>('ACTIVE');
 
   const loadGroups = async () => {
     try {
@@ -84,6 +85,17 @@ export default function GroupsScreen() {
           <Text style={styles.groupName}>{item.group.name}</Text>
           <View style={styles.badgeRow}>
             <Text style={styles.groupTypeBadge}>{item.group.type.toUpperCase()}</Text>
+            {item.group.is_archived === 1 ? (
+              <View style={styles.archivedBadge}>
+                <Ionicons name="archive" size={10} color="#92400E" />
+                <Text style={styles.archivedBadgeText}>Archived</Text>
+              </View>
+            ) : isSettled ? (
+              <View style={styles.settledBadge}>
+                <Ionicons name="checkmark-circle" size={10} color="#065F46" />
+                <Text style={styles.settledBadgeText}>Settled</Text>
+              </View>
+            ) : null}
             {item.group.simplify_debts === 1 && (
               <View style={styles.proPill}>
                 <Text style={styles.proPillText}>Simplified Debts</Text>
@@ -121,8 +133,19 @@ export default function GroupsScreen() {
 
   const filteredGroups = groups.filter((item) => {
     const matchesSearch = item.group.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesType = selectedType === 'ALL' || item.group.type.toLowerCase() === selectedType.toLowerCase();
-    return matchesSearch && matchesType;
+    const matchesType =
+      selectedType === 'ALL' || item.group.type.toLowerCase() === selectedType.toLowerCase();
+
+    let matchesStatus = true;
+    if (statusFilter === 'ACTIVE') {
+      matchesStatus = item.group.is_archived !== 1;
+    } else if (statusFilter === 'ARCHIVED') {
+      matchesStatus = item.group.is_archived === 1;
+    } else if (statusFilter === 'SETTLED') {
+      matchesStatus = Math.abs(item.userBalance) < 0.01 && item.group.is_archived !== 1;
+    }
+
+    return matchesSearch && matchesType && matchesStatus;
   });
 
   return (
@@ -136,6 +159,44 @@ export default function GroupsScreen() {
           <Ionicons name="add" size={18} color="#FFFFFF" />
           <Text style={styles.createButtonText}>Start a new group</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Status Segmented Control */}
+      <View style={styles.statusSegment}>
+        {(['ACTIVE', 'SETTLED', 'ARCHIVED', 'ALL'] as const).map((status) => {
+          const count = groups.filter((g) => {
+            if (status === 'ACTIVE') return g.group.is_archived !== 1;
+            if (status === 'ARCHIVED') return g.group.is_archived === 1;
+            if (status === 'SETTLED') return Math.abs(g.userBalance) < 0.01 && g.group.is_archived !== 1;
+            return true;
+          }).length;
+
+          return (
+            <TouchableOpacity
+              key={status}
+              style={[
+                styles.statusSegmentBtn,
+                statusFilter === status && styles.statusSegmentBtnActive,
+              ]}
+              onPress={() => setStatusFilter(status)}
+            >
+              <Text
+                style={[
+                  styles.statusSegmentText,
+                  statusFilter === status && styles.statusSegmentTextActive,
+                ]}
+              >
+                {status === 'ACTIVE'
+                  ? `Active (${count})`
+                  : status === 'SETTLED'
+                  ? `Settled (${count})`
+                  : status === 'ARCHIVED'
+                  ? `Archived (${count})`
+                  : `All (${count})`}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {/* Search Bar & Type Chips */}
@@ -187,13 +248,33 @@ export default function GroupsScreen() {
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <MaterialCommunityIcons name="account-group" size={60} color="#D1D5DB" />
+            <MaterialCommunityIcons
+              name={
+                statusFilter === 'ARCHIVED'
+                  ? 'archive-outline'
+                  : statusFilter === 'SETTLED'
+                  ? 'check-circle-outline'
+                  : 'account-group'
+              }
+              size={60}
+              color="#D1D5DB"
+            />
             <Text style={styles.emptyTitle}>
-              {searchQuery || selectedType !== 'ALL' ? 'No groups match your search' : 'You are not in any groups yet'}
+              {searchQuery || selectedType !== 'ALL'
+                ? 'No groups match your search'
+                : statusFilter === 'ARCHIVED'
+                ? 'No archived groups'
+                : statusFilter === 'SETTLED'
+                ? 'No settled groups'
+                : 'You are not in any groups yet'}
             </Text>
             <Text style={styles.emptySub}>
               {searchQuery || selectedType !== 'ALL'
-                ? 'Try clearing your search filters'
+                ? 'Try clearing your search or category filters.'
+                : statusFilter === 'ARCHIVED'
+                ? 'You can archive completed trips and settled groups from their group details screen.'
+                : statusFilter === 'SETTLED'
+                ? 'Groups with a settled balance will appear here.'
                 : 'Groups are the easiest way to track expenses for trips, roommates, or events!'}
             </Text>
           </View>
@@ -378,5 +459,60 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 20,
+  },
+  statusSegment: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 6,
+    gap: 8,
+  },
+  statusSegmentBtn: {
+    flex: 1,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  statusSegmentBtnActive: {
+    backgroundColor: '#1cc29f',
+  },
+  statusSegmentText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  statusSegmentTextActive: {
+    color: '#FFFFFF',
+  },
+  archivedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  archivedBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  settledBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  settledBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#065F46',
   },
 });

@@ -286,6 +286,7 @@ export async function createGroup(
     type,
     currency,
     simplify_debts: 1,
+    is_archived: 0,
     created_at: createdAt,
   };
 
@@ -308,6 +309,15 @@ export async function updateGroupSimplifyDebts(groupId: string, simplify: boolea
   const idx = groups.findIndex((g) => g.id === groupId);
   if (idx !== -1) {
     groups[idx].simplify_debts = simplify ? 1 : 0;
+    await setItem(STORAGE_KEYS.GROUPS, groups);
+  }
+}
+
+export async function updateGroupArchivedStatus(groupId: string, isArchived: boolean): Promise<void> {
+  const groups = await getItem<Group[]>(STORAGE_KEYS.GROUPS, []);
+  const idx = groups.findIndex((g) => g.id === groupId);
+  if (idx !== -1) {
+    groups[idx].is_archived = isArchived ? 1 : 0;
     await setItem(STORAGE_KEYS.GROUPS, groups);
   }
 }

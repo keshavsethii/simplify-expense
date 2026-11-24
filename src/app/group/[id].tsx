@@ -24,6 +24,7 @@ import {
   getGroupBalances,
   getExpenses,
   updateGroupSimplifyDebts,
+  updateGroupArchivedStatus,
   deleteGroup,
   getAllMembers,
   addMemberToGroup,
@@ -245,6 +246,39 @@ export default function GroupDetailScreen() {
     );
   };
 
+  const isArchived = group?.is_archived === 1;
+  const isSettled = simplifiedDebtsList.length === 0;
+
+  const handleToggleArchive = () => {
+    if (!group) return;
+    if (isArchived) {
+      Alert.alert('Unarchive Group', `Restore "${group.name}" back to active groups?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unarchive',
+          onPress: async () => {
+            await updateGroupArchivedStatus(group.id, false);
+            setGroup({ ...group, is_archived: 0 });
+          },
+        },
+      ]);
+    } else {
+      const message = isSettled
+        ? `Archive "${group.name}"? It will be hidden from the main active groups list.`
+        : `"${group.name}" still has unsettled debts. Do you want to archive it anyway?`;
+      Alert.alert(isSettled ? 'Archive Group' : 'Archive Group with Balances?', message, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Archive',
+          onPress: async () => {
+            await updateGroupArchivedStatus(group.id, true);
+            setGroup({ ...group, is_archived: 1 });
+          },
+        },
+      ]);
+    }
+  };
+
   const groupCategories = [
     'ALL',
     ...Array.from(
@@ -282,6 +316,16 @@ export default function GroupDetailScreen() {
                 <Ionicons name="share-social-outline" size={20} color="#FFFFFF" />
               </TouchableOpacity>
               <TouchableOpacity
+                onPress={handleToggleArchive}
+                style={styles.headerActionBtn}
+              >
+                <Ionicons
+                  name={isArchived ? 'cube' : 'archive-outline'}
+                  size={20}
+                  color="#FFFFFF"
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
                 onPress={handleDeleteGroup}
                 style={styles.headerActionBtn}
               >
@@ -291,6 +335,19 @@ export default function GroupDetailScreen() {
           ),
         }}
       />
+
+      {/* Archived Banner */}
+      {isArchived && (
+        <View style={styles.archivedBanner}>
+          <Ionicons name="archive" size={16} color="#B45309" />
+          <Text style={styles.archivedBannerText}>
+            This group is archived and hidden from your active list.
+          </Text>
+          <TouchableOpacity onPress={handleToggleArchive} style={styles.unarchiveBtn}>
+            <Text style={styles.unarchiveBtnText}>Restore</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Header Info */}
       <View style={styles.headerCard}>
@@ -1360,5 +1417,32 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 14,
+  },
+  archivedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#FDE68A',
+    gap: 8,
+  },
+  archivedBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#92400E',
+  },
+  unarchiveBtn: {
+    backgroundColor: '#F59E0B',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  unarchiveBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

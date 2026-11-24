@@ -270,7 +270,7 @@ export default function GroupsScreen() {
             </Text>
             <Text style={styles.emptySub}>
               {searchQuery || selectedType !== 'ALL'
-                ? 'Try clearing your search or category filters.'
+                ? 'Try clearing your search or type filters.'
                 : statusFilter === 'ARCHIVED'
                 ? 'You can archive completed trips and settled groups from their group details screen.'
                 : statusFilter === 'SETTLED'

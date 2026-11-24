@@ -539,27 +539,31 @@ export default function AccountScreen() {
             </Text>
 
             {/* Existing Categories List */}
-            <ScrollView style={{ maxHeight: 200, marginBottom: 12 }}>
-              {categoriesList.map((cat) => (
-                <View key={cat.name} style={styles.categoryRowItem}>
-                  <View style={styles.categoryRowLeft}>
-                    <View style={[styles.catColorDot, { backgroundColor: cat.color }]} />
-                    <Text style={styles.categoryRowName}>{cat.name}</Text>
-                    {cat.is_default && (
-                      <Text style={styles.defaultBadge}>Default</Text>
-                    )}
-                  </View>
-                  {!cat.is_default && (
+            {categoriesList.length > 0 ? (
+              <ScrollView style={{ maxHeight: 200, marginBottom: 12 }}>
+                {categoriesList.map((cat) => (
+                  <View key={cat.name} style={styles.categoryRowItem}>
+                    <View style={styles.categoryRowLeft}>
+                      <View style={[styles.catColorDot, { backgroundColor: cat.color }]} />
+                      <Text style={styles.categoryRowName}>{cat.name}</Text>
+                    </View>
                     <TouchableOpacity
                       onPress={() => handleDeleteCategory(cat.name)}
                       style={styles.deleteCatBtn}
                     >
                       <Ionicons name="trash-outline" size={16} color="#EF4444" />
                     </TouchableOpacity>
-                  )}
-                </View>
-              ))}
-            </ScrollView>
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={styles.emptyCategoriesBox}>
+                <Ionicons name="pricetags-outline" size={32} color="#D1D5DB" />
+                <Text style={styles.emptyCategoriesText}>
+                  No categories added yet. Category sections are hidden across the app until you create one.
+                </Text>
+              </View>
+            )}
 
             {/* Add New Category Form */}
             <View style={styles.addCategoryCard}>
@@ -911,5 +915,18 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
+  },
+  emptyCategoriesBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+  },
+  emptyCategoriesText: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
   },
 });

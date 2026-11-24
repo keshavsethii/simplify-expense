@@ -336,6 +336,21 @@ export async function getGroupMembers(groupId: string): Promise<Member[]> {
   return allMembers.filter((m) => memberIdSet.has(m.id));
 }
 
+export async function getSharedGroups(memberId1: string, memberId2: string): Promise<Group[]> {
+  const groupMembers = await getItem<{ group_id: string; member_id: string }[]>(
+    STORAGE_KEYS.GROUP_MEMBERS,
+    []
+  );
+  const groups1 = new Set(
+    groupMembers.filter((gm) => gm.member_id === memberId1).map((gm) => gm.group_id)
+  );
+  const sharedGroupIds = groupMembers
+    .filter((gm) => gm.member_id === memberId2 && groups1.has(gm.group_id))
+    .map((gm) => gm.group_id);
+  const allGroups = await getAllGroups();
+  return allGroups.filter((g) => sharedGroupIds.includes(g.id) && g.is_archived !== 1);
+}
+
 export async function addMemberToGroup(groupId: string, memberId: string): Promise<void> {
   const groupMembers = await getItem<{ group_id: string; member_id: string }[]>(
     STORAGE_KEYS.GROUP_MEMBERS,
@@ -583,10 +598,33 @@ export async function getGroupBalances(groupId: string): Promise<MemberBalanceIn
   const members = await getGroupMembers(groupId);
   const expenses = await getExpenses(groupId);
   const allSplits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);
-  const settlements = await getSettlements(groupId);
+  const allSettlements = await getItem<Settlement[]>(STORAGE_KEYS.SETTLEMENTS, []);
+  const groupMembers = await getItem<{ group_id: string; member_id: string }[]>(
+    STORAGE_KEYS.GROUP_MEMBERS,
+    []
+  );
 
   const expenseIdSet = new Set(expenses.map((e) => e.id));
   const splits = allSplits.filter((s) => expenseIdSet.has(s.expense_id));
+
+  // Determine how many active mutual groups two members share
+  const getMutualGroupCount = (mId1: string, mId2: string) => {
+    const g1 = new Set(groupMembers.filter((gm) => gm.member_id === mId1).map((gm) => gm.group_id));
+    return groupMembers.filter((gm) => gm.member_id === mId2 && g1.has(gm.group_id)).length;
+  };
+
+  const memberIdSet = new Set(members.map((m) => m.id));
+
+  // A settlement applies to this group if:
+  // 1) Explicitly recorded for this group (s.group_id === groupId)
+  // 2) OR direct settlement between members of this group where this is their only shared group
+  const settlements = allSettlements.filter((s) => {
+    if (s.group_id === groupId) return true;
+    if (!s.group_id && memberIdSet.has(s.from_member_id) && memberIdSet.has(s.to_member_id)) {
+      return getMutualGroupCount(s.from_member_id, s.to_member_id) === 1;
+    }
+    return false;
+  });
 
   const balanceMap: Record<string, number> = {};
   for (const m of members) {
@@ -825,21 +863,9 @@ export async function getOverallUserBalance(): Promise<{
 }
 
 // --- Categories Management ---
-const DEFAULT_CATEGORIES: CustomCategory[] = [
-  { name: 'General', color: '#6B7280', icon: 'dots-horizontal-circle-outline', is_default: true },
-  { name: 'Groceries', color: '#10B981', icon: 'cart-outline', is_default: true },
-  { name: 'Food', color: '#F59E0B', icon: 'fast-food-outline', is_default: true },
-  { name: 'Utilities', color: '#3B82F6', icon: 'flash-outline', is_default: true },
-  { name: 'Travel', color: '#8B5CF6', icon: 'airplane-outline', is_default: true },
-  { name: 'Entertainment', color: '#EC4899', icon: 'film-outline', is_default: true },
-];
-
 export async function getAllCategories(): Promise<CustomCategory[]> {
   const custom = await getItem<CustomCategory[]>(STORAGE_KEYS.CUSTOM_CATEGORIES, []);
-  const map = new Map<string, CustomCategory>();
-  DEFAULT_CATEGORIES.forEach((c) => map.set(c.name.toLowerCase(), c));
-  custom.forEach((c) => map.set(c.name.toLowerCase(), c));
-  return Array.from(map.values());
+  return (custom || []).filter((c) => !c.is_default);
 }
 
 export async function addCustomCategory(category: {
@@ -854,7 +880,6 @@ export async function addCustomCategory(category: {
     name: trimmed,
     color: category.color || '#1cc29f',
     icon: category.icon || 'tag-outline',
-    is_default: false,
   };
   const filtered = existing.filter((c) => c.name.toLowerCase() !== trimmed.toLowerCase());
   filtered.push(newCat);

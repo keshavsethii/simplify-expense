@@ -16,7 +16,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect, Stack } from 'expo-rou
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { getFriendLedger, deleteMember, deleteSettlement } from '../../db/queries';
+import { getFriendLedger, deleteMember, deleteSettlement, getCurrentUser, getSharedGroups } from '../../db/queries';
 import { Member, Expense, Settlement } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
 
@@ -281,13 +281,22 @@ export default function FriendDetailScreen() {
 
           <TouchableOpacity
             style={styles.settleBtn}
-            onPress={() => {
+            onPress={async () => {
+              const u = await getCurrentUser();
+              const shared = await getSharedGroups(u.id, friend.id);
+              // If netBalance > 0, friend owes you => friend is payer, you are receiver.
+              // If netBalance < 0, you owe friend => you are payer, friend is receiver.
+              const pFrom = netBalance > 0.01 ? friend.id : u.id;
+              const pTo = netBalance > 0.01 ? u.id : friend.id;
               router.push({
                 pathname: '/settle-up',
                 params: {
                   friendId: friend.id,
                   friendName: friend.name,
+                  fromMemberId: pFrom,
+                  toMemberId: pTo,
                   amount: !isSettled ? String(Math.abs(netBalance)) : '',
+                  groupId: shared.length === 1 ? shared[0].id : undefined,
                 },
               });
             }}

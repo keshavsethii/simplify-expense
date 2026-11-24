@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { getExpenses, getCurrentUser, getExpenseSplits, getAllCategories } from '../../db/queries';
 import { formatMoney } from '../../utils/currency';
 
@@ -77,8 +77,8 @@ export default function AnalyticsScreen() {
             monthUserShare += amount;
           }
 
-          if (viewScope === 'ALL' || isTargetMonth) {
-            const cat = exp.category || 'General';
+          if (exp.category && (viewScope === 'ALL' || isTargetMonth)) {
+            const cat = exp.category;
             categoryTotals[cat] = (categoryTotals[cat] || 0) + amount;
           }
         }
@@ -172,51 +172,44 @@ export default function AnalyticsScreen() {
         </View>
       </View>
 
-      {/* Visual Spending Bar Chart */}
-      <View style={styles.chartCard}>
-        <Text style={styles.cardHeader}>
-          {viewScope === 'MONTH' ? `Spending by Category (${monthDisplayTitle})` : 'All-Time Spending by Category'}
-        </Text>
+      {/* Visual Spending Bar Chart - Only if categories exist */}
+      {categoryBreakdown.length > 0 && (
+        <View style={styles.chartCard}>
+          <Text style={styles.cardHeader}>
+            {viewScope === 'MONTH' ? `Spending by Category (${monthDisplayTitle})` : 'All-Time Spending by Category'}
+          </Text>
 
-        {categoryBreakdown.length > 0 ? (
-          <>
-            {/* Horizontal Stacked Ratio Bar */}
-            <View style={styles.stackedBar}>
-              {categoryBreakdown.map((item, index) => (
-                <View
-                  key={index}
-                  style={{
-                    backgroundColor: item.color,
-                    flex: item.percentage,
-                    height: '100%',
-                  }}
-                />
-              ))}
-            </View>
-
-            {/* Category breakdown itemized rows */}
-            <View style={styles.breakdownList}>
-              {categoryBreakdown.map((item, index) => (
-                <View key={index} style={styles.categoryRow}>
-                  <View style={styles.categoryLeft}>
-                    <View style={[styles.dot, { backgroundColor: item.color }]} />
-                    <Text style={styles.categoryName}>{item.category}</Text>
-                  </View>
-                  <View style={styles.categoryRight}>
-                    <Text style={styles.categoryAmount}>{formatMoney(item.total)}</Text>
-                    <Text style={styles.categoryPercent}>{item.percentage}%</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          </>
-        ) : (
-          <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons name="chart-pie" size={48} color="#D1D5DB" />
-            <Text style={styles.emptyText}>No expenses recorded for breakdown yet</Text>
+          {/* Horizontal Stacked Ratio Bar */}
+          <View style={styles.stackedBar}>
+            {categoryBreakdown.map((item, index) => (
+              <View
+                key={index}
+                style={{
+                  backgroundColor: item.color,
+                  flex: item.percentage,
+                  height: '100%',
+                }}
+              />
+            ))}
           </View>
-        )}
-      </View>
+
+          {/* Category breakdown itemized rows */}
+          <View style={styles.breakdownList}>
+            {categoryBreakdown.map((item, index) => (
+              <View key={index} style={styles.categoryRow}>
+                <View style={styles.categoryLeft}>
+                  <View style={[styles.dot, { backgroundColor: item.color }]} />
+                  <Text style={styles.categoryName}>{item.category}</Text>
+                </View>
+                <View style={styles.categoryRight}>
+                  <Text style={styles.categoryAmount}>{formatMoney(item.total)}</Text>
+                  <Text style={styles.categoryPercent}>{item.percentage}%</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
     </ScrollView>
   );
 }

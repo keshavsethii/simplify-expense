@@ -10,8 +10,15 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { getAllMembers, getCurrentUser, addSettlement } from '../db/queries';
-import { Member } from '../db/types';
+import {
+  getAllMembers,
+  getCurrentUser,
+  addSettlement,
+  getGroupMembers,
+  getFriendLedger,
+  getSharedGroups,
+} from '../db/queries';
+import { Member, Group } from '../db/types';
 import { formatMoney, CURRENCY_SYMBOL, CURRENCY_CODE } from '../utils/currency';
 
 export default function SettleUpScreen() {
@@ -26,32 +33,98 @@ export default function SettleUpScreen() {
   }>();
 
   const [members, setMembers] = useState<Member[]>([]);
-
   const [fromMemberId, setFromMemberId] = useState<string>('');
   const [toMemberId, setToMemberId] = useState<string>('');
   const [amount, setAmount] = useState<string>(params.amount || '');
   const [notes, setNotes] = useState<string>('');
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(params.groupId || null);
+  const [sharedGroups, setSharedGroups] = useState<Group[]>([]);
 
   useEffect(() => {
     async function init() {
-      const allMems = await getAllMembers();
       const u = await getCurrentUser();
-      setMembers(allMems);
+      let mems: Member[] = [];
+
+      if (params.groupId) {
+        mems = await getGroupMembers(params.groupId);
+      } else {
+        mems = await getAllMembers();
+      }
+      setMembers(mems);
+
+      let pFrom = '';
+      let pTo = '';
+      let pAmt = params.amount || '';
 
       if (params.fromMemberId && params.toMemberId) {
-        setFromMemberId(params.fromMemberId);
-        setToMemberId(params.toMemberId);
+        pFrom = params.fromMemberId;
+        pTo = params.toMemberId;
       } else if (params.friendId) {
-        setFromMemberId(u.id);
-        setToMemberId(params.friendId);
+        try {
+          const ledger = await getFriendLedger(params.friendId);
+          if (ledger.netBalance > 0.01) {
+            // Friend owes user: Friend is payer, User is recipient
+            pFrom = params.friendId;
+            pTo = u.id;
+            if (!pAmt) pAmt = String(Math.round(ledger.netBalance * 100) / 100);
+          } else if (ledger.netBalance < -0.01) {
+            // User owes friend: User is payer, Friend is recipient
+            pFrom = u.id;
+            pTo = params.friendId;
+            if (!pAmt) pAmt = String(Math.round(Math.abs(ledger.netBalance) * 100) / 100);
+          } else {
+            pFrom = u.id;
+            pTo = params.friendId;
+          }
+        } catch {
+          pFrom = u.id;
+          pTo = params.friendId;
+        }
       } else {
-        setFromMemberId(u.id);
-        const firstOther = allMems.find((m) => m.id !== u.id);
-        if (firstOther) setToMemberId(firstOther.id);
+        pFrom = u.id;
+        const firstOther = mems.find((m) => m.id !== u.id);
+        if (firstOther) pTo = firstOther.id;
+      }
+
+      setFromMemberId(pFrom);
+      setToMemberId(pTo);
+      if (pAmt) setAmount(pAmt);
+
+      if (pFrom && pTo) {
+        const mutual = await getSharedGroups(pFrom, pTo);
+        setSharedGroups(mutual);
+        if (params.groupId) {
+          setSelectedGroupId(params.groupId);
+        } else if (mutual.length === 1) {
+          setSelectedGroupId(mutual[0].id);
+        }
       }
     }
     init();
-  }, [params.friendId, params.fromMemberId, params.toMemberId]);
+  }, [params.groupId, params.friendId, params.fromMemberId, params.toMemberId, params.amount]);
+
+  useEffect(() => {
+    if (!fromMemberId || !toMemberId || fromMemberId === toMemberId) return;
+    async function updateMutual() {
+      const mutual = await getSharedGroups(fromMemberId, toMemberId);
+      setSharedGroups(mutual);
+      if (!params.groupId) {
+        if (mutual.length === 1) {
+          setSelectedGroupId(mutual[0].id);
+        } else if (!mutual.some((g) => g.id === selectedGroupId)) {
+          setSelectedGroupId(null);
+        }
+      }
+    }
+    updateMutual();
+  }, [fromMemberId, toMemberId, params.groupId, selectedGroupId]);
+
+  const handleSwap = () => {
+    const prevFrom = fromMemberId;
+    const prevTo = toMemberId;
+    setFromMemberId(prevTo);
+    setToMemberId(prevFrom);
+  };
 
   const handleSettle = async () => {
     const parsedAmount = parseFloat(amount);
@@ -66,7 +139,7 @@ export default function SettleUpScreen() {
 
     try {
       await addSettlement({
-        groupId: params.groupId || null,
+        groupId: selectedGroupId || null,
         fromMemberId,
         toMemberId,
         amount: parsedAmount,
@@ -104,10 +177,14 @@ export default function SettleUpScreen() {
             <Text style={styles.flowName}>{payer?.is_user === 1 ? 'You' : payer?.name}</Text>
           </View>
 
-          <View style={styles.arrowCol}>
-            <Ionicons name="arrow-forward" size={28} color="#1cc29f" />
-            <Text style={styles.arrowText}>paid</Text>
-          </View>
+          <TouchableOpacity
+            style={styles.arrowCol}
+            onPress={handleSwap}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="swap-horizontal" size={26} color="#1cc29f" />
+            <Text style={styles.arrowText}>Swap</Text>
+          </TouchableOpacity>
 
           <View style={styles.personCol}>
             <Text style={styles.flowLabel}>Recipient</Text>
@@ -117,6 +194,34 @@ export default function SettleUpScreen() {
             <Text style={styles.flowName}>{recipient?.is_user === 1 ? 'You' : recipient?.name}</Text>
           </View>
         </View>
+
+        {/* Shared Groups Selector */}
+        {sharedGroups.length > 0 && (
+          <View style={styles.groupSection}>
+            <Text style={styles.label}>Apply to Group</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
+              <TouchableOpacity
+                style={[styles.pill, selectedGroupId === null && styles.pillActive]}
+                onPress={() => setSelectedGroupId(null)}
+              >
+                <Text style={[styles.pillText, selectedGroupId === null && styles.pillTextActive]}>
+                  Direct (No Group)
+                </Text>
+              </TouchableOpacity>
+              {sharedGroups.map((g) => (
+                <TouchableOpacity
+                  key={g.id}
+                  style={[styles.pill, selectedGroupId === g.id && styles.pillActive]}
+                  onPress={() => setSelectedGroupId(g.id)}
+                >
+                  <Text style={[styles.pillText, selectedGroupId === g.id && styles.pillTextActive]}>
+                    {g.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Change Payer / Recipient options */}
         <Text style={styles.label}>Select Who Paid</Text>
@@ -285,6 +390,9 @@ const styles = StyleSheet.create({
     color: '#1cc29f',
     fontWeight: '700',
     textTransform: 'uppercase',
+  },
+  groupSection: {
+    marginBottom: 6,
   },
   label: {
     fontSize: 12,

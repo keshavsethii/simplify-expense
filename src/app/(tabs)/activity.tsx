@@ -130,7 +130,15 @@ export default function ActivityScreen() {
     }, [])
   );
 
-  const categories = ['ALL', 'General', 'Food', 'Groceries', 'Utilities', 'Travel', 'Entertainment', 'Payments'];
+  const uniqueCategories = Array.from(
+    new Set(
+      activityItems
+        .filter((i) => i.type === 'EXPENSE' && i.expense.category)
+        .map((i) => (i.type === 'EXPENSE' ? i.expense.category : ''))
+        .filter((c): c is string => !!c && c.trim() !== '')
+    )
+  );
+  const categories = uniqueCategories.length > 0 ? ['ALL', ...uniqueCategories, 'Payments'] : [];
 
   const now = new Date();
   const currentMonthStr = now.toISOString().substring(0, 7);
@@ -243,32 +251,34 @@ export default function ActivityScreen() {
           ))}
         </View>
 
-        {/* Filter Pills */}
-        <FlatList
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          data={categories}
-          keyExtractor={(item) => item}
-          contentContainerStyle={styles.filterList}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[
-                styles.filterChip,
-                selectedCategory === item && styles.filterChipActive,
-              ]}
-              onPress={() => setSelectedCategory(item)}
-            >
-              <Text
+        {/* Filter Pills - Only when categories exist */}
+        {categories.length > 0 && (
+          <FlatList
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            data={categories}
+            keyExtractor={(item) => item}
+            contentContainerStyle={styles.filterList}
+            renderItem={({ item }) => (
+              <TouchableOpacity
                 style={[
-                  styles.filterChipText,
-                  selectedCategory === item && styles.filterChipTextActive,
+                  styles.filterChip,
+                  selectedCategory === item && styles.filterChipActive,
                 ]}
+                onPress={() => setSelectedCategory(item)}
               >
-                {item}
-              </Text>
-            </TouchableOpacity>
-          )}
-        />
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    selectedCategory === item && styles.filterChipTextActive,
+                  ]}
+                >
+                  {item}
+                </Text>
+              </TouchableOpacity>
+            )}
+          />
+        )}
       </View>
 
       <FlatList

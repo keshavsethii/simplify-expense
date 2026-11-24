@@ -17,6 +17,7 @@ import {
   getAllMembers,
   getAllGroups,
   getCurrentUser,
+  getGroupMembers,
   addExpense,
   updateExpense,
   getExpenses,
@@ -40,7 +41,7 @@ export default function AddExpenseScreen() {
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().substring(0, 10));
-  const [category, setCategory] = useState('General');
+  const [category, setCategory] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(params.groupId || null);
 
   const [members, setMembers] = useState<Member[]>([]);
@@ -62,6 +63,10 @@ export default function AddExpenseScreen() {
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
   const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
   const [templateTitle, setTemplateTitle] = useState('');
+
+  // Dropdown Modals
+  const [showPayerModal, setShowPayerModal] = useState(false);
+  const [showSplitModal, setShowSplitModal] = useState(false);
 
   // Multi-Payer
   const [isMultiPayer, setIsMultiPayer] = useState(false);
@@ -210,33 +215,60 @@ export default function AddExpenseScreen() {
 
   const splitStatus = calculateSplitStatus();
 
-  const loadGroupDefaultSplit = async (grpId: string, allMems: Member[]) => {
-    setSelectedMemberIds(allMems.map((m) => m.id));
-    const def = await getDefaultGroupSplit(grpId);
-    if (def) {
-      setSplitType(def.split_type);
-      try {
-        const parsed = JSON.parse(def.splits_json);
-        setCustomValues(parsed);
-      } catch (e) {
-        console.error(e);
+  const loadMembersForGroup = async (grpId: string | null) => {
+    let grpMems: Member[] = [];
+    if (grpId) {
+      grpMems = await getGroupMembers(grpId);
+    } else {
+      grpMems = await getAllMembers();
+    }
+    setMembers(grpMems);
+    setSelectedMemberIds(grpMems.map((m) => m.id));
+
+    // Ensure payerId is a valid member of this group
+    const u = currentUser || (await getCurrentUser());
+    if (u && grpMems.some((m) => m.id === u.id)) {
+      setPayerId(u.id);
+    } else if (grpMems.length > 0) {
+      setPayerId(grpMems[0].id);
+    }
+
+    // Reset payer amounts for multi-payer
+    const pMap: Record<string, string> = {};
+    grpMems.forEach((m) => {
+      pMap[m.id] = '';
+    });
+    setPayerAmounts(pMap);
+
+    if (grpId) {
+      const def = await getDefaultGroupSplit(grpId);
+      if (def) {
+        setSplitType(def.split_type);
+        try {
+          const parsed = JSON.parse(def.splits_json);
+          setCustomValues(parsed);
+        } catch (e) {
+          console.error(e);
+        }
       }
     }
   };
 
   useEffect(() => {
     async function init() {
-      const allMems = await getAllMembers();
       const allGrps = await getAllGroups();
       const u = await getCurrentUser();
       const allCats = await getAllCategories();
       const allTmpls = await getAllTemplates();
 
-      setMembers(allMems);
       setGroups(allGrps);
       setCurrentUser(u);
-      setPayerId(u.id);
       setCategories(allCats);
+      if (allCats.length > 0) {
+        setCategory(allCats[0].name);
+      } else {
+        setCategory('');
+      }
       setTemplates(allTmpls);
 
       // If editing existing expense, load its data
@@ -247,10 +279,18 @@ export default function AddExpenseScreen() {
           setDescription(existing.description);
           setAmount(String(existing.amount));
           setDate(existing.date);
-          setCategory(existing.category || 'General');
+          setCategory(existing.category || (allCats.length > 0 ? allCats[0].name : ''));
           setSelectedGroupId(existing.group_id);
           setPayerId(existing.paid_by_member_id);
           setSplitType(existing.split_type);
+
+          let expMems: Member[] = [];
+          if (existing.group_id) {
+            expMems = await getGroupMembers(existing.group_id);
+          } else {
+            expMems = await getAllMembers();
+          }
+          setMembers(expMems);
 
           if (existing.payers_json) {
             try {
@@ -283,10 +323,10 @@ export default function AddExpenseScreen() {
       // If groupId provided, filter to group members
       if (params.groupId) {
         setSelectedGroupId(params.groupId);
-        loadGroupDefaultSplit(params.groupId, allMems);
+        await loadMembersForGroup(params.groupId);
       } else {
-        // default include everyone or at least user
-        setSelectedMemberIds(allMems.map((m) => m.id));
+        setSelectedGroupId(null);
+        await loadMembersForGroup(null);
       }
     }
     init();
@@ -458,6 +498,8 @@ export default function AddExpenseScreen() {
     }
   };
 
+  const currentPayer = members.find((m) => m.id === payerId) || currentUser;
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -496,7 +538,10 @@ export default function AddExpenseScreen() {
                 styles.groupPill,
                 selectedGroupId === null && styles.groupPillActive,
               ]}
-              onPress={() => setSelectedGroupId(null)}
+              onPress={async () => {
+                setSelectedGroupId(null);
+                await loadMembersForGroup(null);
+              }}
             >
               <Text
                 style={[
@@ -514,8 +559,9 @@ export default function AddExpenseScreen() {
                   styles.groupPill,
                   selectedGroupId === g.id && styles.groupPillActive,
                 ]}
-                onPress={() => {
+                onPress={async () => {
                   setSelectedGroupId(g.id);
+                  await loadMembersForGroup(g.id);
                 }}
               >
                 <Text
@@ -576,42 +622,44 @@ export default function AddExpenseScreen() {
           </View>
         </View>
 
-        {/* Category Picker */}
-        <View style={styles.section}>
-          <Text style={styles.label}>Category</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
-            {categories.map((cat) => (
-              <TouchableOpacity
-                key={cat.name}
-                style={[
-                  styles.categoryPill,
-                  category === cat.name && {
-                    backgroundColor: cat.color || '#1cc29f',
-                    borderColor: cat.color || '#1cc29f',
-                  },
-                ]}
-                onPress={() => setCategory(cat.name)}
-              >
-                <View style={styles.catPillInner}>
-                  <View
-                    style={[
-                      styles.catColorDotSmall,
-                      { backgroundColor: category === cat.name ? '#FFFFFF' : cat.color },
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.categoryPillText,
-                      category === cat.name && styles.categoryPillTextActive,
-                    ]}
-                  >
-                    {cat.name}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+        {/* Category Picker - only visible when categories exist */}
+        {categories.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.label}>Category</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
+              {categories.map((cat) => (
+                <TouchableOpacity
+                  key={cat.name}
+                  style={[
+                    styles.categoryPill,
+                    category === cat.name && {
+                      backgroundColor: cat.color || '#1cc29f',
+                      borderColor: cat.color || '#1cc29f',
+                    },
+                  ]}
+                  onPress={() => setCategory(cat.name)}
+                >
+                  <View style={styles.catPillInner}>
+                    <View
+                      style={[
+                        styles.catColorDotSmall,
+                        { backgroundColor: category === cat.name ? '#FFFFFF' : cat.color },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.categoryPillText,
+                        category === cat.name && styles.categoryPillTextActive,
+                      ]}
+                    >
+                      {cat.name}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Paid by selector */}
         <View style={styles.section}>
@@ -638,27 +686,31 @@ export default function AddExpenseScreen() {
           </View>
 
           {!isMultiPayer ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
-              {members.map((m) => (
-                <TouchableOpacity
-                  key={m.id}
+            <TouchableOpacity
+              style={styles.dropdownBtn}
+              onPress={() => setShowPayerModal(true)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.dropdownLeft}>
+                <View
                   style={[
-                    styles.payerPill,
-                    payerId === m.id && styles.payerPillActive,
+                    styles.avatarDot,
+                    { backgroundColor: currentPayer?.avatar_color || '#1cc29f' },
                   ]}
-                  onPress={() => setPayerId(m.id)}
                 >
-                  <Text
-                    style={[
-                      styles.payerPillText,
-                      payerId === m.id && styles.payerPillTextActive,
-                    ]}
-                  >
-                    {m.is_user === 1 ? 'You' : m.name}
+                  <Text style={styles.avatarDotText}>
+                    {(currentPayer?.name || '?').charAt(0).toUpperCase()}
                   </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+                </View>
+                <View style={{ marginLeft: 10 }}>
+                  <Text style={styles.dropdownLabelText}>Paid by</Text>
+                  <Text style={styles.dropdownValueText}>
+                    {currentPayer?.is_user === 1 ? 'You' : currentPayer?.name || 'Select payer'}
+                  </Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-down" size={20} color="#6B7280" />
+            </TouchableOpacity>
           ) : (
             <View style={styles.multiPayerBox}>
               <Text style={styles.multiPayerSubtitle}>
@@ -697,10 +749,8 @@ export default function AddExpenseScreen() {
         <View style={styles.section}>
           <View style={styles.splitHeader}>
             <Text style={styles.label}>Split Options</Text>
-            <TouchableOpacity onPress={toggleSelectAll} style={styles.selectAllBtn}>
-              <Text style={styles.selectAllText}>
-                {selectedMemberIds.length === members.length ? 'Deselect all' : 'Select all'}
-              </Text>
+            <TouchableOpacity onPress={() => setShowSplitModal(true)} style={styles.selectAllBtn}>
+              <Text style={styles.selectAllText}>Edit members</Text>
             </TouchableOpacity>
           </View>
 
@@ -734,9 +784,31 @@ export default function AddExpenseScreen() {
             ))}
           </View>
 
+          {/* Dropdown Menu for Split with */}
+          <TouchableOpacity
+            style={styles.dropdownBtn}
+            onPress={() => setShowSplitModal(true)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.dropdownLeft}>
+              <View style={styles.iconCircleSmall}>
+                <Ionicons name="people" size={18} color="#1cc29f" />
+              </View>
+              <View style={{ marginLeft: 10 }}>
+                <Text style={styles.dropdownLabelText}>Splitting with</Text>
+                <Text style={styles.dropdownValueText}>
+                  {selectedMemberIds.length === members.length
+                    ? `Everyone in group (${members.length} people)`
+                    : `${selectedMemberIds.length} of ${members.length} people selected`}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-down" size={20} color="#6B7280" />
+          </TouchableOpacity>
+
           {/* Real-time Status Banner */}
           {parsedTotalAmount > 0 && (
-            <View style={[styles.statusBanner, { borderColor: splitStatus.statusColor }]}>
+            <View style={[styles.statusBanner, { borderColor: splitStatus.statusColor, marginTop: 12 }]}>
               <Ionicons
                 name={splitStatus.isValid ? 'checkmark-circle' : 'alert-circle'}
                 size={16}
@@ -748,84 +820,104 @@ export default function AddExpenseScreen() {
             </View>
           )}
 
-          {/* Members Split Breakdown */}
+          {/* Members Split Breakdown: only selected members appear afterwards */}
           <View style={styles.splitMembersList}>
-            {members.map((m) => {
-              const isSelected = selectedMemberIds.includes(m.id);
-
-              // Calculated share preview for visual clarity
-              let previewText = '';
-              if (isSelected && parsedTotalAmount > 0) {
-                if (splitType === 'EQUAL') {
-                  const perPerson = parsedTotalAmount / selectedMemberIds.length;
-                  previewText = formatMoney(perPerson);
-                } else if (splitType === 'PERCENT') {
-                  const pct = parseFloat(customValues[m.id] || '0') || 0;
-                  const amt = (parsedTotalAmount * pct) / 100;
-                  previewText = formatMoney(amt);
-                } else if (splitType === 'SHARES') {
-                  let totalShares = 0;
-                  selectedMemberIds.forEach((id) => {
-                    totalShares += parseFloat(customValues[id] || '1') || 0;
-                  });
-                  const sh = parseFloat(customValues[m.id] || '1') || 0;
-                  const amt = totalShares > 0 ? (parsedTotalAmount * sh) / totalShares : 0;
-                  previewText = formatMoney(amt);
+            {members
+              .filter((m) => selectedMemberIds.includes(m.id))
+              .map((m) => {
+                let previewText = '';
+                if (parsedTotalAmount > 0) {
+                  if (splitType === 'EQUAL') {
+                    const perPerson = parsedTotalAmount / selectedMemberIds.length;
+                    previewText = formatMoney(perPerson);
+                  } else if (splitType === 'PERCENT') {
+                    const pct = parseFloat(customValues[m.id] || '0') || 0;
+                    const amt = (parsedTotalAmount * pct) / 100;
+                    previewText = formatMoney(amt);
+                  } else if (splitType === 'SHARES') {
+                    let totalShares = 0;
+                    selectedMemberIds.forEach((id) => {
+                      totalShares += parseFloat(customValues[id] || '1') || 0;
+                    });
+                    const sh = parseFloat(customValues[m.id] || '1') || 0;
+                    const amt = totalShares > 0 ? (parsedTotalAmount * sh) / totalShares : 0;
+                    previewText = formatMoney(amt);
+                  }
                 }
-              }
 
-              return (
-                <View key={m.id} style={styles.memberSplitRow}>
-                  <TouchableOpacity
-                    style={styles.memberSelectLeft}
-                    onPress={() => toggleMemberSelection(m.id)}
-                  >
-                    <Ionicons
-                      name={isSelected ? 'checkbox' : 'square-outline'}
-                      size={22}
-                      color={isSelected ? '#1cc29f' : '#9CA3AF'}
-                    />
-                    <View>
-                      <Text style={styles.memberSplitName}>
-                        {m.is_user === 1 ? 'You' : m.name}
-                      </Text>
-                      {previewText !== '' && (
-                        <Text style={styles.memberPreviewText}>owes {previewText}</Text>
+                return (
+                  <View key={m.id} style={styles.memberSplitCard}>
+                    <View style={styles.memberSplitLeft}>
+                      <View
+                        style={[
+                          styles.memberAvatarDot,
+                          { backgroundColor: m.avatar_color || '#1cc29f' },
+                        ]}
+                      >
+                        <Text style={styles.memberAvatarText}>
+                          {m.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={{ marginLeft: 10 }}>
+                        <Text style={styles.memberSplitName}>
+                          {m.is_user === 1 ? 'You' : m.name}
+                        </Text>
+                        {previewText !== '' && (
+                          <Text style={styles.memberPreviewText}>owes {previewText}</Text>
+                        )}
+                      </View>
+                    </View>
+
+                    <View style={styles.memberSplitRight}>
+                      {/* Input for custom splits */}
+                      {splitType !== 'EQUAL' && (
+                        <View style={styles.customInputBox}>
+                          <TextInput
+                            style={styles.customInput}
+                            placeholder={
+                              splitType === 'EXACT'
+                                ? '0.00'
+                                : splitType === 'PERCENT'
+                                ? '%'
+                                : '1'
+                            }
+                            placeholderTextColor="#9CA3AF"
+                            keyboardType="decimal-pad"
+                            value={customValues[m.id] || ''}
+                            onChangeText={(text) =>
+                              setCustomValues({ ...customValues, [m.id]: text })
+                            }
+                          />
+                          <Text style={styles.customInputSuffix}>
+                            {splitType === 'PERCENT'
+                              ? '%'
+                              : splitType === 'SHARES'
+                              ? 'sh'
+                              : CURRENCY_SYMBOL}
+                          </Text>
+                        </View>
                       )}
-                    </View>
-                  </TouchableOpacity>
 
-                  {/* Input for custom splits */}
-                  {isSelected && splitType !== 'EQUAL' && (
-                    <View style={styles.customInputBox}>
-                      <TextInput
-                        style={styles.customInput}
-                        placeholder={
-                          splitType === 'EXACT'
-                            ? '0.00'
-                            : splitType === 'PERCENT'
-                            ? '%'
-                            : '1'
-                        }
-                        placeholderTextColor="#9CA3AF"
-                        keyboardType="decimal-pad"
-                        value={customValues[m.id] || ''}
-                        onChangeText={(text) =>
-                          setCustomValues({ ...customValues, [m.id]: text })
-                        }
-                      />
-                      <Text style={styles.customInputSuffix}>
-                        {splitType === 'PERCENT'
-                          ? '%'
-                          : splitType === 'SHARES'
-                          ? 'sh'
-                          : CURRENCY_SYMBOL}
-                      </Text>
+                      {/* Remove Button */}
+                      <TouchableOpacity
+                        style={styles.removeMemberBtn}
+                        onPress={() => toggleMemberSelection(m.id)}
+                      >
+                        <Ionicons name="close-circle-outline" size={22} color="#9CA3AF" />
+                      </TouchableOpacity>
                     </View>
-                  )}
-                </View>
-              );
-            })}
+                  </View>
+                );
+              })}
+
+            {selectedMemberIds.length === 0 && (
+              <View style={styles.emptySelectedBox}>
+                <Ionicons name="people-outline" size={32} color="#D1D5DB" />
+                <Text style={styles.emptySelectedText}>
+                  No participants selected. Tap &apos;Splitting with&apos; above to choose who shares this bill.
+                </Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -934,6 +1026,119 @@ export default function AddExpenseScreen() {
                 onPress={handleConfirmSaveTemplate}
               >
                 <Text style={styles.modalSaveBtnText}>Save Template</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Payer Selection Dropdown Modal */}
+      <Modal visible={showPayerModal} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Who Paid?</Text>
+              <TouchableOpacity onPress={() => setShowPayerModal(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              Select who covered this bill.
+            </Text>
+
+            <ScrollView style={{ maxHeight: 350 }}>
+              {members.map((m) => (
+                <TouchableOpacity
+                  key={m.id}
+                  style={styles.modalMemberRow}
+                  onPress={() => {
+                    setPayerId(m.id);
+                    setShowPayerModal(false);
+                  }}
+                >
+                  <View style={styles.modalMemberLeft}>
+                    <View
+                      style={[
+                        styles.avatarDot,
+                        { backgroundColor: m.avatar_color || '#1cc29f' },
+                      ]}
+                    >
+                      <Text style={styles.avatarDotText}>
+                        {m.name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <Text style={styles.modalMemberName}>
+                      {m.is_user === 1 ? 'You' : m.name}
+                    </Text>
+                  </View>
+                  {payerId === m.id && (
+                    <Ionicons name="checkmark-circle" size={22} color="#1cc29f" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Split With Multi-Select Dropdown Modal */}
+      <Modal visible={showSplitModal} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Split With</Text>
+              <TouchableOpacity onPress={toggleSelectAll} style={styles.selectAllBtn}>
+                <Text style={styles.selectAllText}>
+                  {selectedMemberIds.length === members.length ? 'Deselect all' : 'Select all'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              Select everyone who should share this bill.
+            </Text>
+
+            <ScrollView style={{ maxHeight: 350 }}>
+              {members.map((m) => {
+                const isSelected = selectedMemberIds.includes(m.id);
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={styles.modalMemberRow}
+                    onPress={() => toggleMemberSelection(m.id)}
+                  >
+                    <View style={styles.modalMemberLeft}>
+                      <Ionicons
+                        name={isSelected ? 'checkbox' : 'square-outline'}
+                        size={22}
+                        color={isSelected ? '#1cc29f' : '#9CA3AF'}
+                      />
+                      <View
+                        style={[
+                          styles.avatarDot,
+                          { backgroundColor: m.avatar_color || '#1cc29f' },
+                        ]}
+                      >
+                        <Text style={styles.avatarDotText}>
+                          {m.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <Text style={styles.modalMemberName}>
+                        {m.is_user === 1 ? 'You' : m.name}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={{ marginTop: 16 }}>
+              <TouchableOpacity
+                style={styles.saveBtn}
+                onPress={() => setShowSplitModal(false)}
+              >
+                <Text style={styles.saveBtnText}>
+                  Done ({selectedMemberIds.length} selected)
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1481,5 +1686,125 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  dropdownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 6,
+  },
+  dropdownLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarDot: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarDotText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  iconCircleSmall: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E8F8F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropdownLabelText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+  },
+  dropdownValueText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+    marginTop: 1,
+  },
+  memberSplitCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  memberSplitLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  memberAvatarDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberAvatarText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  memberSplitRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  removeMemberBtn: {
+    padding: 4,
+  },
+  emptySelectedBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#D1D5DB',
+  },
+  emptySelectedText: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+    paddingHorizontal: 20,
+  },
+  modalMemberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  modalMemberLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  modalMemberName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
   },
 });

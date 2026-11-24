@@ -279,26 +279,16 @@ export default function GroupDetailScreen() {
     }
   };
 
-  const groupCategories = [
-    'ALL',
-    ...Array.from(
-      new Set([
-        'General',
-        'Food',
-        'Groceries',
-        'Travel',
-        'Utilities',
-        'Entertainment',
-        ...expenses.map((e) => e.category || 'General'),
-      ])
-    ),
-  ];
+  const uniqueCategories = Array.from(
+    new Set(expenses.map((e) => e.category).filter((c): c is string => !!c && c.trim() !== ''))
+  );
+  const groupCategories = uniqueCategories.length > 0 ? ['ALL', ...uniqueCategories] : [];
 
   const filteredExpenses = expenses.filter((e) => {
     const matchesSearch = e.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory =
       selectedCategory === 'ALL' ||
-      (e.category || 'General').toLowerCase() === selectedCategory.toLowerCase();
+      (e.category || '').toLowerCase() === selectedCategory.toLowerCase();
     return matchesSearch && matchesCategory;
   });
 
@@ -370,9 +360,20 @@ export default function GroupDetailScreen() {
           <TouchableOpacity
             style={styles.settleBtn}
             onPress={() => {
+              const currentUser = members.find((m) => m.is_user === 1);
+              const userDebt =
+                simplifiedDebtsList.find((d) => d.fromMember.id === currentUser?.id) ||
+                simplifiedDebtsList.find((d) => d.toMember.id === currentUser?.id) ||
+                simplifiedDebtsList[0];
+
               router.push({
                 pathname: '/settle-up',
-                params: { groupId: group?.id },
+                params: {
+                  groupId: group?.id,
+                  fromMemberId: userDebt?.fromMember.id,
+                  toMemberId: userDebt?.toMember.id,
+                  amount: userDebt ? String(userDebt.amount) : '',
+                },
               });
             }}
           >
@@ -456,31 +457,33 @@ export default function GroupDetailScreen() {
               )}
             </View>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.categoryChipsRow}
-            >
-              {groupCategories.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[
-                    styles.categoryChip,
-                    selectedCategory === cat && styles.categoryChipActive,
-                  ]}
-                  onPress={() => setSelectedCategory(cat)}
-                >
-                  <Text
+            {groupCategories.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.categoryChipsRow}
+              >
+                {groupCategories.map((cat) => (
+                  <TouchableOpacity
+                    key={cat}
                     style={[
-                      styles.categoryChipText,
-                      selectedCategory === cat && styles.categoryChipTextActive,
+                      styles.categoryChip,
+                      selectedCategory === cat && styles.categoryChipActive,
                     ]}
+                    onPress={() => setSelectedCategory(cat)}
                   >
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+                    <Text
+                      style={[
+                        styles.categoryChipText,
+                        selectedCategory === cat && styles.categoryChipTextActive,
+                      ]}
+                    >
+                      {cat}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
           </View>
 
           <FlatList

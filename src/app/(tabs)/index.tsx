@@ -83,10 +83,7 @@ export default function FriendsScreen() {
         style={styles.friendCard}
         activeOpacity={0.7}
         onPress={() => {
-          router.push({
-            pathname: '/settle-up',
-            params: { friendId: item.member.id, friendName: item.member.name },
-          });
+          router.push(`/friend/${item.member.id}`);
         }}
         onLongPress={() => handleDeleteFriend(item.member)}
       >

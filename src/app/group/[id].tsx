@@ -8,6 +8,7 @@ import {
   Switch,
   RefreshControl,
   ScrollView,
+  Modal,
   Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect, Stack } from 'expo-router';
@@ -19,6 +20,8 @@ import {
   getExpenses,
   updateGroupSimplifyDebts,
   deleteGroup,
+  getAllMembers,
+  addMemberToGroup,
 } from '../../db/queries';
 import { Group, Member, Expense, SimplifiedDebt } from '../../db/types';
 import { simplifyDebts } from '../../utils/simplifyDebts';
@@ -35,6 +38,8 @@ export default function GroupDetailScreen() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'expenses' | 'balances' | 'totals'>('expenses');
+  const [allAvailableFriends, setAllAvailableFriends] = useState<Member[]>([]);
+  const [showAddMemberModal, setShowAddMemberModal] = useState(false);
 
   const loadGroupDetails = async () => {
     if (!id) return;
@@ -46,6 +51,10 @@ export default function GroupDetailScreen() {
 
       const mems = await getGroupMembers(id);
       setMembers(mems);
+
+      const all = await getAllMembers();
+      const currentIds = new Set(mems.map((m) => m.id));
+      setAllAvailableFriends(all.filter((m) => !currentIds.has(m.id)));
 
       const bals = await getGroupBalances(id);
       setBalances(bals);
@@ -72,6 +81,17 @@ export default function GroupDetailScreen() {
       loadGroupDetails();
     }, [id])
   );
+
+  const handleAddMember = async (memberId: string) => {
+    if (!group) return;
+    try {
+      await addMemberToGroup(group.id, memberId);
+      setShowAddMemberModal(false);
+      loadGroupDetails();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to add member to group');
+    }
+  };
 
   const toggleSimplifyDebts = async (val: boolean) => {
     if (!group) return;
@@ -117,9 +137,18 @@ export default function GroupDetailScreen() {
         <View style={styles.headerTop}>
           <View>
             <Text style={styles.groupTitle}>{group?.name}</Text>
-            <Text style={styles.groupSub}>
-              {members.length} members
-            </Text>
+            <View style={styles.subTitleRow}>
+              <Text style={styles.groupSub}>
+                {members.length} members
+              </Text>
+              <TouchableOpacity
+                style={styles.addMemberBadge}
+                onPress={() => setShowAddMemberModal(true)}
+              >
+                <Ionicons name="person-add" size={12} color="#1cc29f" />
+                <Text style={styles.addMemberBadgeText}>+ Add</Text>
+              </TouchableOpacity>
+            </View>
           </View>
           <TouchableOpacity
             style={styles.settleBtn}
@@ -363,6 +392,62 @@ export default function GroupDetailScreen() {
         <Ionicons name="add" size={26} color="#FFFFFF" />
         <Text style={styles.fabText}>Add expense</Text>
       </TouchableOpacity>
+
+      {/* Add Member Modal */}
+      <Modal visible={showAddMemberModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Add Member to {group?.name}</Text>
+              <TouchableOpacity onPress={() => setShowAddMemberModal(false)}>
+                <Ionicons name="close" size={22} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            {allAvailableFriends.length > 0 ? (
+              <FlatList
+                data={allAvailableFriends}
+                keyExtractor={(item) => item.id}
+                style={{ maxHeight: 280 }}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.availableFriendRow}
+                    onPress={() => handleAddMember(item.id)}
+                  >
+                    <View
+                      style={[
+                        styles.availableFriendAvatar,
+                        { backgroundColor: item.avatar_color || '#1cc29f' },
+                      ]}
+                    >
+                      <Text style={styles.availableFriendAvatarText}>
+                        {item.name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <Text style={styles.availableFriendName}>{item.name}</Text>
+                    <Ionicons name="add-circle" size={22} color="#1cc29f" />
+                  </TouchableOpacity>
+                )}
+              />
+            ) : (
+              <View style={styles.noFriendsContainer}>
+                <Text style={styles.noFriendsText}>
+                  All your added friends are already part of this group!
+                </Text>
+                <TouchableOpacity
+                  style={styles.createNewFriendBtn}
+                  onPress={() => {
+                    setShowAddMemberModal(false);
+                    router.push('/add-friend');
+                  }}
+                >
+                  <Text style={styles.createNewFriendBtnText}>+ Create New Friend</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -392,6 +477,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6B7280',
     marginTop: 2,
+  },
+  subTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
+  addMemberBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#E8F8F5',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  addMemberBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1cc29f',
   },
   settleBtn: {
     backgroundColor: '#1cc29f',
@@ -715,5 +820,75 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  availableFriendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  availableFriendAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  availableFriendAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  availableFriendName: {
+    flex: 1,
+    marginLeft: 12,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  noFriendsContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  noFriendsText: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  createNewFriendBtn: {
+    marginTop: 14,
+    backgroundColor: '#1cc29f',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  createNewFriendBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
   },
 });

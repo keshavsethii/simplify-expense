@@ -44,6 +44,13 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
+          name="friend/[id]"
+          options={{
+            title: 'Friend Ledger',
+            headerBackTitle: 'Back',
+          }}
+        />
+        <Stack.Screen
           name="add-expense"
           options={{
             title: 'Add an Expense',

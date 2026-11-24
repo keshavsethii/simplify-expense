@@ -10,17 +10,39 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { getExpenses, getAllMembers, getAllGroups, getExpenseSplits } from '../../db/queries';
-import { Expense, Member, Group } from '../../db/types';
+import {
+  getExpenses,
+  getAllMembers,
+  getAllGroups,
+  getExpenseSplits,
+  getSettlements,
+  deleteSettlement,
+} from '../../db/queries';
+import { Expense, Member, Group, Settlement } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
+import { Alert } from 'react-native';
 
-interface ExpenseItemWithDetails {
-  expense: Expense;
-  payerName: string;
-  groupName?: string;
-  userInvolvement: string;
-  userAmount: number;
-}
+type ActivityItem =
+  | {
+      type: 'EXPENSE';
+      id: string;
+      date: string;
+      expense: Expense;
+      payerName: string;
+      groupName?: string;
+      userInvolvement: string;
+      userAmount: number;
+    }
+  | {
+      type: 'SETTLEMENT';
+      id: string;
+      date: string;
+      settlement: Settlement;
+      fromName: string;
+      toName: string;
+      groupName?: string;
+      amount: number;
+    };
 
 export default function ActivityScreen() {
   const router = useRouter();
@@ -28,19 +50,20 @@ export default function ActivityScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [timeFilter, setTimeFilter] = useState<'ALL' | 'MONTH' | 'WEEK'>('ALL');
-  const [expenses, setExpenses] = useState<ExpenseItemWithDetails[]>([]);
+  const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
 
   const loadData = async () => {
     try {
       setLoading(true);
       const allExpenses = await getExpenses();
+      const allSettlements = await getSettlements();
       const allMembers = await getAllMembers();
       const allGroups = await getAllGroups();
       const memberMap = new Map(allMembers.map((m) => [m.id, m]));
       const groupMap = new Map(allGroups.map((g) => [g.id, g]));
       const currentUser = allMembers.find((m) => m.is_user === 1);
 
-      const items: ExpenseItemWithDetails[] = [];
+      const items: ActivityItem[] = [];
 
       for (const exp of allExpenses) {
         const splits = await getExpenseSplits(exp.id);
@@ -53,7 +76,6 @@ export default function ActivityScreen() {
         const userSplit = currentUser ? splits.find((s) => s.member_id === currentUser.id) : undefined;
 
         if (currentUser && exp.paid_by_member_id === currentUser.id) {
-          // You paid
           const otherSplitsTotal = splits
             .filter((s) => s.member_id !== currentUser.id)
             .reduce((sum, s) => sum + s.amount, 0);
@@ -65,15 +87,36 @@ export default function ActivityScreen() {
         }
 
         items.push({
+          type: 'EXPENSE',
+          id: exp.id,
+          date: exp.date,
           expense: exp,
-          payerName: payer?.name || 'Unknown',
+          payerName: payer?.is_user === 1 ? 'You' : payer?.name || 'Unknown',
           groupName: group?.name,
           userInvolvement,
           userAmount,
         });
       }
 
-      setExpenses(items);
+      for (const set of allSettlements) {
+        const fromM = memberMap.get(set.from_member_id);
+        const toM = memberMap.get(set.to_member_id);
+        const group = set.group_id ? groupMap.get(set.group_id) : undefined;
+
+        items.push({
+          type: 'SETTLEMENT',
+          id: set.id,
+          date: set.date,
+          settlement: set,
+          fromName: fromM?.is_user === 1 ? 'You' : fromM?.name || 'Unknown',
+          toName: toM?.is_user === 1 ? 'You' : toM?.name || 'Unknown',
+          groupName: group?.name,
+          amount: set.amount,
+        });
+      }
+
+      items.sort((a, b) => b.date.localeCompare(a.date));
+      setActivityItems(items);
     } catch (e) {
       console.error(e);
     } finally {
@@ -87,31 +130,58 @@ export default function ActivityScreen() {
     }, [])
   );
 
-  const categories = ['ALL', 'General', 'Food', 'Groceries', 'Utilities', 'Travel', 'Entertainment'];
+  const categories = ['ALL', 'General', 'Food', 'Groceries', 'Utilities', 'Travel', 'Entertainment', 'Payments'];
 
   const now = new Date();
   const currentMonthStr = now.toISOString().substring(0, 7);
   const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
 
-  const filteredExpenses = expenses.filter((item) => {
-    const matchesSearch =
-      item.expense.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.payerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (item.groupName && item.groupName.toLowerCase().includes(searchQuery.toLowerCase()));
-
-    const matchesCategory =
-      selectedCategory === 'ALL' ||
-      item.expense.category?.toLowerCase() === selectedCategory.toLowerCase();
-
+  const filteredItems = activityItems.filter((item) => {
+    let matchesSearch = false;
+    let matchesCategory = false;
     let matchesTime = true;
-    if (timeFilter === 'MONTH') {
-      matchesTime = item.expense.date.startsWith(currentMonthStr);
-    } else if (timeFilter === 'WEEK') {
-      matchesTime = item.expense.date >= oneWeekAgo;
+
+    if (item.type === 'EXPENSE') {
+      matchesSearch =
+        item.expense.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.payerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (item.groupName ? item.groupName.toLowerCase().includes(searchQuery.toLowerCase()) : false);
+
+      matchesCategory =
+        selectedCategory === 'ALL' ||
+        item.expense.category?.toLowerCase() === selectedCategory.toLowerCase();
+
+      if (timeFilter === 'MONTH') matchesTime = item.expense.date.startsWith(currentMonthStr);
+      else if (timeFilter === 'WEEK') matchesTime = item.expense.date >= oneWeekAgo;
+    } else {
+      // Settlement item
+      matchesSearch =
+        item.fromName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.toName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (item.groupName ? item.groupName.toLowerCase().includes(searchQuery.toLowerCase()) : false);
+
+      matchesCategory = selectedCategory === 'ALL' || selectedCategory === 'Payments';
+
+      if (timeFilter === 'MONTH') matchesTime = item.date.startsWith(currentMonthStr);
+      else if (timeFilter === 'WEEK') matchesTime = item.date >= oneWeekAgo;
     }
 
     return matchesSearch && matchesCategory && matchesTime;
   });
+
+  const handleDeleteSettlement = (settlementId: string) => {
+    Alert.alert('Delete Payment', 'Are you sure you want to revert this payment record?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteSettlement(settlementId);
+          loadData();
+        },
+      },
+    ]);
+  };
 
   const getCategoryIcon = (category: string) => {
     switch (category?.toLowerCase()) {
@@ -202,63 +272,93 @@ export default function ActivityScreen() {
       </View>
 
       <FlatList
-        data={filteredExpenses}
-        keyExtractor={(item) => item.expense.id}
+        data={filteredItems}
+        keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={loadData} colors={['#1cc29f']} />}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.expenseCard}
-            activeOpacity={0.7}
-            onPress={() => router.push(`/expense-detail/${item.expense.id}`)}
-          >
-            <View style={styles.iconCircle}>{getCategoryIcon(item.expense.category)}</View>
+        renderItem={({ item }) => {
+          if (item.type === 'SETTLEMENT') {
+            return (
+              <View style={styles.settlementCard}>
+                <View style={styles.settlementIconCircle}>
+                  <Ionicons name="checkmark-done" size={22} color="#1cc29f" />
+                </View>
+                <View style={styles.details}>
+                  <Text style={styles.description}>
+                    {item.fromName} paid {item.toName}
+                  </Text>
+                  <Text style={styles.subtext}>
+                    {item.groupName ? `${item.groupName} • ` : ''}Payment / Settle Up
+                  </Text>
+                  <Text style={styles.dateText}>{item.date}</Text>
+                </View>
+                <View style={styles.involvementContainer}>
+                  <Text style={[styles.involvementAmount, styles.textPositive]}>
+                    {formatMoney(item.amount)}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => handleDeleteSettlement(item.id)}
+                    style={styles.revertBtn}
+                  >
+                    <Text style={styles.revertBtnText}>Revert</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          }
 
-            <View style={styles.details}>
-              <Text style={styles.description}>{item.expense.description}</Text>
-              <Text style={styles.subtext}>
-                {item.groupName ? `${item.groupName} • ` : ''}
-                {item.payerName} paid {formatMoney(item.expense.amount, item.expense.currency)}
-              </Text>
-              <Text style={styles.dateText}>{item.expense.date}</Text>
-            </View>
+          return (
+            <TouchableOpacity
+              style={styles.expenseCard}
+              activeOpacity={0.7}
+              onPress={() => router.push(`/expense-detail/${item.expense.id}`)}
+            >
+              <View style={styles.iconCircle}>{getCategoryIcon(item.expense.category)}</View>
 
-            <View style={styles.involvementContainer}>
-              <Text
-                style={[
-                  styles.involvementLabel,
-                  item.userInvolvement.includes('lent')
-                    ? styles.textPositive
-                    : item.userInvolvement.includes('borrowed')
-                    ? styles.textNegative
-                    : styles.textNeutral,
-                ]}
-              >
-                {item.userInvolvement}
-              </Text>
-              <Text
-                style={[
-                  styles.involvementAmount,
-                  item.userInvolvement.includes('lent')
-                    ? styles.textPositive
-                    : item.userInvolvement.includes('borrowed')
-                    ? styles.textNegative
-                    : styles.textNeutral,
-                ]}
-              >
-                {item.userAmount > 0
-                  ? formatMoney(item.userAmount, item.expense.currency)
-                  : '—'}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        )}
+              <View style={styles.details}>
+                <Text style={styles.description}>{item.expense.description}</Text>
+                <Text style={styles.subtext}>
+                  {item.groupName ? `${item.groupName} • ` : ''}
+                  {item.payerName} paid {formatMoney(item.expense.amount)}
+                </Text>
+                <Text style={styles.dateText}>{item.expense.date}</Text>
+              </View>
+
+              <View style={styles.involvementContainer}>
+                <Text
+                  style={[
+                    styles.involvementLabel,
+                    item.userInvolvement.includes('lent')
+                      ? styles.textPositive
+                      : item.userInvolvement.includes('borrowed')
+                      ? styles.textNegative
+                      : styles.textNeutral,
+                  ]}
+                >
+                  {item.userInvolvement}
+                </Text>
+                <Text
+                  style={[
+                    styles.involvementAmount,
+                    item.userInvolvement.includes('lent')
+                      ? styles.textPositive
+                      : item.userInvolvement.includes('borrowed')
+                      ? styles.textNegative
+                      : styles.textNeutral,
+                  ]}
+                >
+                  {item.userAmount > 0 ? formatMoney(item.userAmount) : '—'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        }}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="receipt-outline" size={54} color="#D1D5DB" />
-            <Text style={styles.emptyTitle}>No matching expenses found</Text>
+            <Text style={styles.emptyTitle}>No matching activity found</Text>
             <Text style={styles.emptySub}>
-              {searchQuery ? 'Try clearing your search query or filters' : 'Record an expense to see activity here!'}
+              {searchQuery ? 'Try clearing your search query or filters' : 'Record an expense or payment to see activity here!'}
             </Text>
           </View>
         }
@@ -352,6 +452,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
+  },
+  settlementCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAFCFB',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  settlementIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E8F8F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  revertBtn: {
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: '#FEE2E2',
+  },
+  revertBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#EF4444',
   },
   iconCircle: {
     width: 44,

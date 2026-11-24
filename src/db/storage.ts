@@ -249,6 +249,18 @@ export async function getGroupMembers(groupId: string): Promise<Member[]> {
   return allMembers.filter((m) => memberIdSet.has(m.id));
 }
 
+export async function addMemberToGroup(groupId: string, memberId: string): Promise<void> {
+  const groupMembers = await getItem<{ group_id: string; member_id: string }[]>(
+    STORAGE_KEYS.GROUP_MEMBERS,
+    []
+  );
+  const alreadyIn = groupMembers.some((gm) => gm.group_id === groupId && gm.member_id === memberId);
+  if (!alreadyIn) {
+    groupMembers.push({ group_id: groupId, member_id: memberId });
+    await setItem(STORAGE_KEYS.GROUP_MEMBERS, groupMembers);
+  }
+}
+
 // ==================== DEFAULT SPLITS (PRO) ====================
 export async function getDefaultGroupSplit(groupId: string): Promise<DefaultGroupSplit | null> {
   const splits = await getItem<DefaultGroupSplit[]>(STORAGE_KEYS.DEFAULT_SPLITS, []);
@@ -518,6 +530,90 @@ export async function getGroupBalances(groupId: string): Promise<MemberBalanceIn
     member: m,
     netBalance: Math.round((balanceMap[m.id] || 0) * 100) / 100,
   }));
+}
+
+export async function getFriendLedger(friendId: string): Promise<{
+  friend: Member;
+  netBalance: number; // positive = friend owes you, negative = you owe friend
+  expenses: { expense: Expense; yourShare: number; friendShare: number; paidByFriend: boolean; paidByYou: boolean }[];
+  settlements: Settlement[];
+}> {
+  const allMembers = await getAllMembers();
+  const currentUser = await getCurrentUser();
+  const friend = allMembers.find((m) => m.id === friendId);
+  if (!friend) throw new Error('Friend not found');
+
+  const allExpenses = await getItem<Expense[]>(STORAGE_KEYS.EXPENSES, []);
+  const allSplits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);
+  const allSettlements = await getItem<Settlement[]>(STORAGE_KEYS.SETTLEMENTS, []);
+
+  const splitsByExpense: Record<string, ExpenseSplit[]> = {};
+  for (const s of allSplits) {
+    if (!splitsByExpense[s.expense_id]) splitsByExpense[s.expense_id] = [];
+    splitsByExpense[s.expense_id].push(s);
+  }
+
+  const mutualExpenses: {
+    expense: Expense;
+    yourShare: number;
+    friendShare: number;
+    paidByFriend: boolean;
+    paidByYou: boolean;
+  }[] = [];
+
+  let balanceWithFriend = 0;
+
+  for (const exp of allExpenses) {
+    const splits = splitsByExpense[exp.id] || [];
+    const yourSplit = splits.find((s) => s.member_id === currentUser.id);
+    const friendSplit = splits.find((s) => s.member_id === friendId);
+
+    const involvesBoth =
+      (exp.paid_by_member_id === currentUser.id && friendSplit) ||
+      (exp.paid_by_member_id === friendId && yourSplit) ||
+      (yourSplit && friendSplit);
+
+    if (involvesBoth) {
+      const paidByYou = exp.paid_by_member_id === currentUser.id;
+      const paidByFriend = exp.paid_by_member_id === friendId;
+
+      if (paidByYou && friendSplit) {
+        balanceWithFriend += friendSplit.amount;
+      } else if (paidByFriend && yourSplit) {
+        balanceWithFriend -= yourSplit.amount;
+      }
+
+      mutualExpenses.push({
+        expense: exp,
+        yourShare: yourSplit ? yourSplit.amount : 0,
+        friendShare: friendSplit ? friendSplit.amount : 0,
+        paidByFriend,
+        paidByYou,
+      });
+    }
+  }
+
+  // Filter settlements between currentUser and friend
+  const mutualSettlements = allSettlements.filter(
+    (s) =>
+      (s.from_member_id === currentUser.id && s.to_member_id === friendId) ||
+      (s.from_member_id === friendId && s.to_member_id === currentUser.id)
+  );
+
+  for (const s of mutualSettlements) {
+    if (s.from_member_id === currentUser.id) {
+      balanceWithFriend += s.amount;
+    } else if (s.to_member_id === currentUser.id) {
+      balanceWithFriend -= s.amount;
+    }
+  }
+
+  return {
+    friend,
+    netBalance: Math.round(balanceWithFriend * 100) / 100,
+    expenses: mutualExpenses.sort((a, b) => b.expense.date.localeCompare(a.expense.date)),
+    settlements: mutualSettlements.sort((a, b) => b.date.localeCompare(a.date)),
+  };
 }
 
 export async function getOverallUserBalance(): Promise<{

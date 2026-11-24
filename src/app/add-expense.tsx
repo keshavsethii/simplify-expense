@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -65,6 +65,7 @@ export default function AddExpenseScreen() {
   const [templateTitle, setTemplateTitle] = useState('');
 
   // Dropdown Modals
+  const [showGroupModal, setShowGroupModal] = useState(false);
   const [showPayerModal, setShowPayerModal] = useState(false);
   const [showSplitModal, setShowSplitModal] = useState(false);
 
@@ -74,10 +75,7 @@ export default function AddExpenseScreen() {
 
   const toggleSelectAll = () => {
     if (selectedMemberIds.length === members.length) {
-      // Keep only current user
-      if (currentUser) {
-        setSelectedMemberIds([currentUser.id]);
-      }
+      setSelectedMemberIds([]);
     } else {
       setSelectedMemberIds(members.map((m) => m.id));
     }
@@ -215,7 +213,7 @@ export default function AddExpenseScreen() {
 
   const splitStatus = calculateSplitStatus();
 
-  const loadMembersForGroup = async (grpId: string | null) => {
+  const loadMembersForGroup = useCallback(async (grpId: string | null) => {
     let grpMems: Member[] = [];
     if (grpId) {
       grpMems = await getGroupMembers(grpId);
@@ -223,7 +221,7 @@ export default function AddExpenseScreen() {
       grpMems = await getAllMembers();
     }
     setMembers(grpMems);
-    setSelectedMemberIds(grpMems.map((m) => m.id));
+    setSelectedMemberIds([]);
 
     // Ensure payerId is a valid member of this group
     const u = currentUser || (await getCurrentUser());
@@ -252,7 +250,7 @@ export default function AddExpenseScreen() {
         }
       }
     }
-  };
+  }, [currentUser]);
 
   useEffect(() => {
     async function init() {
@@ -330,14 +328,10 @@ export default function AddExpenseScreen() {
       }
     }
     init();
-  }, [params.groupId, params.expenseId]);
+  }, [params.groupId, params.expenseId, loadMembersForGroup]);
 
   const toggleMemberSelection = (mId: string) => {
     if (selectedMemberIds.includes(mId)) {
-      if (selectedMemberIds.length === 1) {
-        Alert.alert('Required', 'At least one person must be part of the expense split.');
-        return;
-      }
       setSelectedMemberIds(selectedMemberIds.filter((id) => id !== mId));
     } else {
       setSelectedMemberIds([...selectedMemberIds, mId]);
@@ -499,6 +493,7 @@ export default function AddExpenseScreen() {
   };
 
   const currentPayer = members.find((m) => m.id === payerId) || currentUser;
+  const selectedGroup = groups.find((g) => g.id === selectedGroupId);
 
   return (
     <KeyboardAvoidingView
@@ -506,76 +501,248 @@ export default function AddExpenseScreen() {
       style={{ flex: 1 }}
     >
       <ScrollView style={styles.container}>
-        {/* Basic Fields */}
+        {/* 1. Group or Friends Selection */}
         <View style={styles.section}>
-          {/* Template Actions Row */}
-          <View style={styles.topActionRow}>
-            <TouchableOpacity
-              style={styles.templateShortcutBtn}
-              onPress={() => setShowTemplatesModal(true)}
-            >
-              <Ionicons name="flash-outline" size={15} color="#1cc29f" />
-              <Text style={styles.templateShortcutText}>
-                {templates.length > 0 ? `Templates (${templates.length})` : 'Templates'}
+          {/* Template Actions Row - ONLY visible if templates exist OR user can save current form as template */}
+          {(templates.length > 0 || (description.trim().length > 0 && parsedTotalAmount > 0 && !isEditing)) && (
+            <View style={styles.topActionRow}>
+              {templates.length > 0 && (
+                <TouchableOpacity
+                  style={styles.templateShortcutBtn}
+                  onPress={() => setShowTemplatesModal(true)}
+                >
+                  <Ionicons name="flash-outline" size={15} color="#1cc29f" />
+                  <Text style={styles.templateShortcutText}>
+                    Templates ({templates.length})
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {description.trim().length > 0 && parsedTotalAmount > 0 && !isEditing && (
+                <TouchableOpacity
+                  style={styles.saveTemplateBtn}
+                  onPress={handleSaveAsTemplate}
+                >
+                  <Ionicons name="bookmark-outline" size={15} color="#3B82F6" />
+                  <Text style={styles.saveTemplateText}>Save as Template</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          <Text style={styles.label}>Group or Friends</Text>
+          <TouchableOpacity
+            style={styles.dropdownBtn}
+            onPress={() => setShowGroupModal(true)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.dropdownLeft}>
+              <View style={styles.iconCircleSmall}>
+                <Ionicons
+                  name={selectedGroup ? 'folder-outline' : 'people-outline'}
+                  size={18}
+                  color="#1cc29f"
+                />
+              </View>
+              <View style={{ marginLeft: 10 }}>
+                <Text style={styles.dropdownLabelText}>With you and</Text>
+                <Text style={styles.dropdownValueText}>
+                  {selectedGroup ? selectedGroup.name : 'No Group (Friends)'}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-down" size={20} color="#6B7280" />
+          </TouchableOpacity>
+        </View>
+
+        {/* 2. Split Options & Split with People (Immediately after group menu) */}
+        <View style={styles.section}>
+          <View style={styles.splitHeader}>
+            <Text style={styles.label}>Split Options</Text>
+            <TouchableOpacity onPress={() => setShowSplitModal(true)} style={styles.selectAllBtn}>
+              <Text style={styles.selectAllText}>
+                {selectedMemberIds.length === 0 ? 'Select people' : 'Edit people'}
               </Text>
             </TouchableOpacity>
-
-            {description.trim().length > 0 && parsedTotalAmount > 0 && !isEditing && (
-              <TouchableOpacity
-                style={styles.saveTemplateBtn}
-                onPress={handleSaveAsTemplate}
-              >
-                <Ionicons name="bookmark-outline" size={15} color="#3B82F6" />
-                <Text style={styles.saveTemplateText}>Save as Template</Text>
-              </TouchableOpacity>
-            )}
           </View>
 
-          <Text style={styles.label}>With you and: Group or Friends</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
-            <TouchableOpacity
-              style={[
-                styles.groupPill,
-                selectedGroupId === null && styles.groupPillActive,
-              ]}
-              onPress={async () => {
-                setSelectedGroupId(null);
-                await loadMembersForGroup(null);
-              }}
-            >
-              <Text
-                style={[
-                  styles.groupPillText,
-                  selectedGroupId === null && styles.groupPillTextActive,
-                ]}
-              >
-                No Group (Friends)
-              </Text>
-            </TouchableOpacity>
-            {groups.map((g) => (
+          {/* Split Type Tabs */}
+          <View style={styles.splitTypeButtons}>
+            {(['EQUAL', 'EXACT', 'PERCENT', 'SHARES'] as const).map((t) => (
               <TouchableOpacity
-                key={g.id}
+                key={t}
                 style={[
-                  styles.groupPill,
-                  selectedGroupId === g.id && styles.groupPillActive,
+                  styles.splitTypeBtn,
+                  splitType === t && styles.splitTypeBtnActive,
                 ]}
-                onPress={async () => {
-                  setSelectedGroupId(g.id);
-                  await loadMembersForGroup(g.id);
-                }}
+                onPress={() => setSplitType(t)}
               >
                 <Text
                   style={[
-                    styles.groupPillText,
-                    selectedGroupId === g.id && styles.groupPillTextActive,
+                    styles.splitTypeBtnText,
+                    splitType === t && styles.splitTypeBtnActive,
                   ]}
                 >
-                  {g.name}
+                  {t === 'EQUAL' ? '=' : t === 'EXACT' ? '1.23' : t === 'PERCENT' ? '%' : 'Shares'}
+                </Text>
+                <Text
+                  style={[
+                    styles.splitTypeSub,
+                    splitType === t && styles.splitTypeSubActive,
+                  ]}
+                >
+                  {t.toLowerCase()}
                 </Text>
               </TouchableOpacity>
             ))}
-          </ScrollView>
+          </View>
 
+          {/* Split with (People) Dropdown */}
+          <TouchableOpacity
+            style={styles.dropdownBtn}
+            onPress={() => setShowSplitModal(true)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.dropdownLeft}>
+              <View style={styles.iconCircleSmall}>
+                <Ionicons name="people" size={18} color="#1cc29f" />
+              </View>
+              <View style={{ marginLeft: 10 }}>
+                <Text style={styles.dropdownLabelText}>Split with (People)</Text>
+                <Text style={styles.dropdownValueText}>
+                  {selectedMemberIds.length === 0
+                    ? 'Select people (None selected)'
+                    : selectedMemberIds.length === members.length
+                    ? `Everyone (${members.length} people)`
+                    : `${selectedMemberIds.length} of ${members.length} people selected`}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-down" size={20} color="#6B7280" />
+          </TouchableOpacity>
+
+          {/* Real-time Status Banner */}
+          {parsedTotalAmount > 0 && selectedMemberIds.length > 0 && (
+            <View style={[styles.statusBanner, { borderColor: splitStatus.statusColor, marginTop: 12 }]}>
+              <Ionicons
+                name={splitStatus.isValid ? 'checkmark-circle' : 'alert-circle'}
+                size={16}
+                color={splitStatus.statusColor}
+              />
+              <Text style={[styles.statusBannerText, { color: splitStatus.statusColor }]}>
+                {splitStatus.text}
+              </Text>
+            </View>
+          )}
+
+          {/* Members Split Breakdown: only selected members appear afterwards */}
+          <View style={styles.splitMembersList}>
+            {members
+              .filter((m) => selectedMemberIds.includes(m.id))
+              .map((m) => {
+                let previewText = '';
+                if (parsedTotalAmount > 0) {
+                  if (splitType === 'EQUAL') {
+                    const perPerson = parsedTotalAmount / selectedMemberIds.length;
+                    previewText = formatMoney(perPerson);
+                  } else if (splitType === 'PERCENT') {
+                    const pct = parseFloat(customValues[m.id] || '0') || 0;
+                    const amt = (parsedTotalAmount * pct) / 100;
+                    previewText = formatMoney(amt);
+                  } else if (splitType === 'SHARES') {
+                    let totalShares = 0;
+                    selectedMemberIds.forEach((id) => {
+                      totalShares += parseFloat(customValues[id] || '1') || 0;
+                    });
+                    const sh = parseFloat(customValues[m.id] || '1') || 0;
+                    const amt = totalShares > 0 ? (parsedTotalAmount * sh) / totalShares : 0;
+                    previewText = formatMoney(amt);
+                  }
+                }
+
+                return (
+                  <View key={m.id} style={styles.memberSplitCard}>
+                    <View style={styles.memberSplitLeft}>
+                      <View
+                        style={[
+                          styles.memberAvatarDot,
+                          { backgroundColor: m.avatar_color || '#1cc29f' },
+                        ]}
+                      >
+                        <Text style={styles.memberAvatarText}>
+                          {m.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={{ marginLeft: 10 }}>
+                        <Text style={styles.memberSplitName}>
+                          {m.is_user === 1 ? 'You' : m.name}
+                        </Text>
+                        {previewText !== '' && (
+                          <Text style={styles.memberPreviewText}>owes {previewText}</Text>
+                        )}
+                      </View>
+                    </View>
+
+                    <View style={styles.memberSplitRight}>
+                      {/* Input for custom splits */}
+                      {splitType !== 'EQUAL' && (
+                        <View style={styles.customInputBox}>
+                          <TextInput
+                            style={styles.customInput}
+                            placeholder={
+                              splitType === 'EXACT'
+                                ? '0.00'
+                                : splitType === 'PERCENT'
+                                ? '%'
+                                : '1'
+                            }
+                            placeholderTextColor="#9CA3AF"
+                            keyboardType="decimal-pad"
+                            value={customValues[m.id] || ''}
+                            onChangeText={(text) =>
+                              setCustomValues({ ...customValues, [m.id]: text })
+                            }
+                          />
+                          <Text style={styles.customInputSuffix}>
+                            {splitType === 'PERCENT'
+                              ? '%'
+                              : splitType === 'SHARES'
+                              ? 'sh'
+                              : CURRENCY_SYMBOL}
+                          </Text>
+                        </View>
+                      )}
+
+                      {/* Remove Button */}
+                      <TouchableOpacity
+                        style={styles.removeMemberBtn}
+                        onPress={() => toggleMemberSelection(m.id)}
+                      >
+                        <Ionicons name="close-circle-outline" size={22} color="#9CA3AF" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })}
+
+            {selectedMemberIds.length === 0 && (
+              <TouchableOpacity
+                style={styles.emptySelectedBox}
+                onPress={() => setShowSplitModal(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="person-add-outline" size={28} color="#1cc29f" />
+                <Text style={styles.emptySelectedText}>
+                  No one selected yet. Tap here or &apos;Split with&apos; above to select who is splitting this expense.
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* 3. Expense Details: Description, Amount, Date */}
+        <View style={styles.section}>
+          <Text style={styles.label}>Expense Details</Text>
           <View style={styles.inputRow}>
             <Ionicons name="receipt-outline" size={24} color="#6B7280" />
             <TextInput
@@ -743,182 +910,6 @@ export default function AddExpenseScreen() {
               </View>
             </View>
           )}
-        </View>
-
-        {/* Split Mode Selector */}
-        <View style={styles.section}>
-          <View style={styles.splitHeader}>
-            <Text style={styles.label}>Split Options</Text>
-            <TouchableOpacity onPress={() => setShowSplitModal(true)} style={styles.selectAllBtn}>
-              <Text style={styles.selectAllText}>Edit members</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.splitTypeButtons}>
-            {(['EQUAL', 'EXACT', 'PERCENT', 'SHARES'] as const).map((t) => (
-              <TouchableOpacity
-                key={t}
-                style={[
-                  styles.splitTypeBtn,
-                  splitType === t && styles.splitTypeBtnActive,
-                ]}
-                onPress={() => setSplitType(t)}
-              >
-                <Text
-                  style={[
-                    styles.splitTypeBtnText,
-                    splitType === t && styles.splitTypeBtnTextActive,
-                  ]}
-                >
-                  {t === 'EQUAL' ? '=' : t === 'EXACT' ? '1.23' : t === 'PERCENT' ? '%' : 'Shares'}
-                </Text>
-                <Text
-                  style={[
-                    styles.splitTypeSub,
-                    splitType === t && styles.splitTypeSubActive,
-                  ]}
-                >
-                  {t.toLowerCase()}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Dropdown Menu for Split with */}
-          <TouchableOpacity
-            style={styles.dropdownBtn}
-            onPress={() => setShowSplitModal(true)}
-            activeOpacity={0.8}
-          >
-            <View style={styles.dropdownLeft}>
-              <View style={styles.iconCircleSmall}>
-                <Ionicons name="people" size={18} color="#1cc29f" />
-              </View>
-              <View style={{ marginLeft: 10 }}>
-                <Text style={styles.dropdownLabelText}>Splitting with</Text>
-                <Text style={styles.dropdownValueText}>
-                  {selectedMemberIds.length === members.length
-                    ? `Everyone in group (${members.length} people)`
-                    : `${selectedMemberIds.length} of ${members.length} people selected`}
-                </Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-down" size={20} color="#6B7280" />
-          </TouchableOpacity>
-
-          {/* Real-time Status Banner */}
-          {parsedTotalAmount > 0 && (
-            <View style={[styles.statusBanner, { borderColor: splitStatus.statusColor, marginTop: 12 }]}>
-              <Ionicons
-                name={splitStatus.isValid ? 'checkmark-circle' : 'alert-circle'}
-                size={16}
-                color={splitStatus.statusColor}
-              />
-              <Text style={[styles.statusBannerText, { color: splitStatus.statusColor }]}>
-                {splitStatus.text}
-              </Text>
-            </View>
-          )}
-
-          {/* Members Split Breakdown: only selected members appear afterwards */}
-          <View style={styles.splitMembersList}>
-            {members
-              .filter((m) => selectedMemberIds.includes(m.id))
-              .map((m) => {
-                let previewText = '';
-                if (parsedTotalAmount > 0) {
-                  if (splitType === 'EQUAL') {
-                    const perPerson = parsedTotalAmount / selectedMemberIds.length;
-                    previewText = formatMoney(perPerson);
-                  } else if (splitType === 'PERCENT') {
-                    const pct = parseFloat(customValues[m.id] || '0') || 0;
-                    const amt = (parsedTotalAmount * pct) / 100;
-                    previewText = formatMoney(amt);
-                  } else if (splitType === 'SHARES') {
-                    let totalShares = 0;
-                    selectedMemberIds.forEach((id) => {
-                      totalShares += parseFloat(customValues[id] || '1') || 0;
-                    });
-                    const sh = parseFloat(customValues[m.id] || '1') || 0;
-                    const amt = totalShares > 0 ? (parsedTotalAmount * sh) / totalShares : 0;
-                    previewText = formatMoney(amt);
-                  }
-                }
-
-                return (
-                  <View key={m.id} style={styles.memberSplitCard}>
-                    <View style={styles.memberSplitLeft}>
-                      <View
-                        style={[
-                          styles.memberAvatarDot,
-                          { backgroundColor: m.avatar_color || '#1cc29f' },
-                        ]}
-                      >
-                        <Text style={styles.memberAvatarText}>
-                          {m.name.charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-                      <View style={{ marginLeft: 10 }}>
-                        <Text style={styles.memberSplitName}>
-                          {m.is_user === 1 ? 'You' : m.name}
-                        </Text>
-                        {previewText !== '' && (
-                          <Text style={styles.memberPreviewText}>owes {previewText}</Text>
-                        )}
-                      </View>
-                    </View>
-
-                    <View style={styles.memberSplitRight}>
-                      {/* Input for custom splits */}
-                      {splitType !== 'EQUAL' && (
-                        <View style={styles.customInputBox}>
-                          <TextInput
-                            style={styles.customInput}
-                            placeholder={
-                              splitType === 'EXACT'
-                                ? '0.00'
-                                : splitType === 'PERCENT'
-                                ? '%'
-                                : '1'
-                            }
-                            placeholderTextColor="#9CA3AF"
-                            keyboardType="decimal-pad"
-                            value={customValues[m.id] || ''}
-                            onChangeText={(text) =>
-                              setCustomValues({ ...customValues, [m.id]: text })
-                            }
-                          />
-                          <Text style={styles.customInputSuffix}>
-                            {splitType === 'PERCENT'
-                              ? '%'
-                              : splitType === 'SHARES'
-                              ? 'sh'
-                              : CURRENCY_SYMBOL}
-                          </Text>
-                        </View>
-                      )}
-
-                      {/* Remove Button */}
-                      <TouchableOpacity
-                        style={styles.removeMemberBtn}
-                        onPress={() => toggleMemberSelection(m.id)}
-                      >
-                        <Ionicons name="close-circle-outline" size={22} color="#9CA3AF" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                );
-              })}
-
-            {selectedMemberIds.length === 0 && (
-              <View style={styles.emptySelectedBox}>
-                <Ionicons name="people-outline" size={32} color="#D1D5DB" />
-                <Text style={styles.emptySelectedText}>
-                  No participants selected. Tap &apos;Splitting with&apos; above to choose who shares this bill.
-                </Text>
-              </View>
-            )}
-          </View>
         </View>
 
         {/* Submit Button */}
@@ -1141,6 +1132,78 @@ export default function AddExpenseScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Group Selection Dropdown Modal */}
+      <Modal visible={showGroupModal} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select Group or Friends</Text>
+              <TouchableOpacity onPress={() => setShowGroupModal(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>
+              Select where this expense belongs.
+            </Text>
+
+            <ScrollView style={{ maxHeight: 350 }}>
+              {/* Option: Non-group (Friends) */}
+              <TouchableOpacity
+                style={styles.modalMemberRow}
+                onPress={() => {
+                  setSelectedGroupId(null);
+                  loadMembersForGroup(null);
+                  setShowGroupModal(false);
+                }}
+              >
+                <View style={styles.modalMemberLeft}>
+                  <View style={[styles.avatarDot, { backgroundColor: '#6B7280' }]}>
+                    <Ionicons name="people" size={16} color="#FFFFFF" />
+                  </View>
+                  <View>
+                    <Text style={styles.modalMemberName}>No Group (Friends)</Text>
+                    <Text style={{ fontSize: 12, color: '#6B7280' }}>
+                      Split between individual friends
+                    </Text>
+                  </View>
+                </View>
+                {!selectedGroupId && (
+                  <Ionicons name="checkmark-circle" size={22} color="#1cc29f" />
+                )}
+              </TouchableOpacity>
+
+              {/* Group Options */}
+              {groups.map((g) => (
+                <TouchableOpacity
+                  key={g.id}
+                  style={styles.modalMemberRow}
+                  onPress={() => {
+                    setSelectedGroupId(g.id);
+                    loadMembersForGroup(g.id);
+                    setShowGroupModal(false);
+                  }}
+                >
+                  <View style={styles.modalMemberLeft}>
+                    <View style={[styles.avatarDot, { backgroundColor: '#1cc29f' }]}>
+                      <Ionicons name="folder" size={16} color="#FFFFFF" />
+                    </View>
+                    <View>
+                      <Text style={styles.modalMemberName}>{g.name}</Text>
+                      <Text style={{ fontSize: 12, color: '#6B7280' }}>
+                        {g.type}
+                      </Text>
+                    </View>
+                  </View>
+                  {selectedGroupId === g.id && (
+                    <Ionicons name="checkmark-circle" size={22} color="#1cc29f" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
         </View>
       </Modal>

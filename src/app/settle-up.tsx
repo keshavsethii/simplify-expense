@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  Modal,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,6 +40,10 @@ export default function SettleUpScreen() {
   const [notes, setNotes] = useState<string>('');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(params.groupId || null);
   const [sharedGroups, setSharedGroups] = useState<Group[]>([]);
+
+  // Modals for dropdown selections
+  const [showPayerModal, setShowPayerModal] = useState(false);
+  const [showRecipientModal, setShowRecipientModal] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -223,36 +228,43 @@ export default function SettleUpScreen() {
           </View>
         )}
 
-        {/* Change Payer / Recipient options */}
-        <Text style={styles.label}>Select Who Paid</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
-          {members.map((m) => (
-            <TouchableOpacity
-              key={m.id}
-              style={[styles.pill, fromMemberId === m.id && styles.pillActive]}
-              onPress={() => setFromMemberId(m.id)}
-            >
-              <Text style={[styles.pillText, fromMemberId === m.id && styles.pillTextActive]}>
-                {m.is_user === 1 ? 'You' : m.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {/* Dropdown: Who Paid */}
+        <Text style={styles.label}>Who Paid</Text>
+        <TouchableOpacity
+          style={styles.dropdownBtn}
+          onPress={() => setShowPayerModal(true)}
+          activeOpacity={0.8}
+        >
+          <View style={styles.dropdownLeft}>
+            <View style={[styles.avatarDot, { backgroundColor: payer?.avatar_color || '#1cc29f' }]}>
+              <Text style={styles.avatarDotText}>{(payer?.name || '?').charAt(0).toUpperCase()}</Text>
+            </View>
+            <View style={{ marginLeft: 10 }}>
+              <Text style={styles.dropdownLabelText}>Payer</Text>
+              <Text style={styles.dropdownValueText}>{payer?.is_user === 1 ? 'You' : payer?.name}</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-down" size={20} color="#6B7280" />
+        </TouchableOpacity>
 
-        <Text style={styles.label}>Select Who Received</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillScroll}>
-          {members.map((m) => (
-            <TouchableOpacity
-              key={m.id}
-              style={[styles.pill, toMemberId === m.id && styles.pillActive]}
-              onPress={() => setToMemberId(m.id)}
-            >
-              <Text style={[styles.pillText, toMemberId === m.id && styles.pillTextActive]}>
-                {m.is_user === 1 ? 'You' : m.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {/* Dropdown: Who Received */}
+        <Text style={styles.label}>Who Received</Text>
+        <TouchableOpacity
+          style={styles.dropdownBtn}
+          onPress={() => setShowRecipientModal(true)}
+          activeOpacity={0.8}
+        >
+          <View style={styles.dropdownLeft}>
+            <View style={[styles.avatarDot, { backgroundColor: recipient?.avatar_color || '#3B82F6' }]}>
+              <Text style={styles.avatarDotText}>{(recipient?.name || '?').charAt(0).toUpperCase()}</Text>
+            </View>
+            <View style={{ marginLeft: 10 }}>
+              <Text style={styles.dropdownLabelText}>Recipient</Text>
+              <Text style={styles.dropdownValueText}>{recipient?.is_user === 1 ? 'You' : recipient?.name}</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-down" size={20} color="#6B7280" />
+        </TouchableOpacity>
 
         {/* Amount */}
         <Text style={styles.label}>Amount Paid</Text>
@@ -315,6 +327,82 @@ export default function SettleUpScreen() {
           <Text style={styles.settleBtnText}>Save Payment</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Payer Selection Dropdown Modal */}
+      <Modal visible={showPayerModal} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select Who Paid</Text>
+              <TouchableOpacity onPress={() => setShowPayerModal(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>Choose the person who made the payment.</Text>
+
+            <ScrollView style={{ maxHeight: 350 }}>
+              {members.map((m) => (
+                <TouchableOpacity
+                  key={m.id}
+                  style={styles.modalMemberRow}
+                  onPress={() => {
+                    setFromMemberId(m.id);
+                    setShowPayerModal(false);
+                  }}
+                >
+                  <View style={styles.modalMemberLeft}>
+                    <View style={[styles.avatarDot, { backgroundColor: m.avatar_color || '#1cc29f' }]}>
+                      <Text style={styles.avatarDotText}>{m.name.charAt(0).toUpperCase()}</Text>
+                    </View>
+                    <Text style={styles.modalMemberName}>{m.is_user === 1 ? 'You' : m.name}</Text>
+                  </View>
+                  {fromMemberId === m.id && (
+                    <Ionicons name="checkmark-circle" size={22} color="#1cc29f" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Recipient Selection Dropdown Modal */}
+      <Modal visible={showRecipientModal} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Select Who Received</Text>
+              <TouchableOpacity onPress={() => setShowRecipientModal(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>Choose the person who received the money.</Text>
+
+            <ScrollView style={{ maxHeight: 350 }}>
+              {members.map((m) => (
+                <TouchableOpacity
+                  key={m.id}
+                  style={styles.modalMemberRow}
+                  onPress={() => {
+                    setToMemberId(m.id);
+                    setShowRecipientModal(false);
+                  }}
+                >
+                  <View style={styles.modalMemberLeft}>
+                    <View style={[styles.avatarDot, { backgroundColor: m.avatar_color || '#3B82F6' }]}>
+                      <Text style={styles.avatarDotText}>{m.name.charAt(0).toUpperCase()}</Text>
+                    </View>
+                    <Text style={styles.modalMemberName}>{m.is_user === 1 ? 'You' : m.name}</Text>
+                  </View>
+                  {toMemberId === m.id && (
+                    <Ionicons name="checkmark-circle" size={22} color="#1cc29f" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -490,5 +578,91 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  dropdownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  dropdownLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dropdownLabelText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+  },
+  dropdownValueText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+    marginTop: 1,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCardLarge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    maxHeight: '80%',
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 14,
+  },
+  modalMemberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  modalMemberLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  modalMemberName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  avatarDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarDotText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

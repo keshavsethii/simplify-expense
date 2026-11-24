@@ -7,9 +7,15 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
+  Modal,
+  TextInput,
+  Platform,
+  Share,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect, Stack } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { getFriendLedger, deleteMember, deleteSettlement } from '../../db/queries';
 import { Member, Expense, Settlement } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
@@ -30,6 +36,127 @@ export default function FriendDetailScreen() {
   }[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [activeTab, setActiveTab] = useState<'expenses' | 'settlements'>('expenses');
+
+  // Export & Share
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showTextPreviewModal, setShowTextPreviewModal] = useState(false);
+  const [previewSummaryText, setPreviewSummaryText] = useState('');
+
+  const generateFriendCsv = (): string => {
+    if (!friend) return '';
+    const rows = [
+      ['Date', 'Type', 'Description', 'Total Amount (INR)', 'Your Share', `${friend.name}'s Share`, 'Paid By'],
+    ];
+    expenses.forEach((item) => {
+      const cleanDesc = `"${(item.expense.description || '').replace(/"/g, '""')}"`;
+      const payer = item.paidByYou ? 'You' : item.paidByFriend ? friend.name : 'Other';
+      rows.push([
+        item.expense.date,
+        'Expense',
+        cleanDesc,
+        String(item.expense.amount),
+        String(item.yourShare),
+        String(item.friendShare),
+        `"${payer}"`,
+      ]);
+    });
+    settlements.forEach((s) => {
+      const payer = s.from_member_id === friend.id ? friend.name : 'You';
+      rows.push([
+        s.date,
+        'Settlement',
+        `"Payment via ${s.notes || 'Cash'}"`,
+        String(s.amount),
+        '-',
+        '-',
+        `"${payer}"`,
+      ]);
+    });
+    return rows.map((r) => r.join(',')).join('\n');
+  };
+
+  const generateFriendTextSummary = (): string => {
+    if (!friend) return '';
+    let text = `📊 Simplify Expense: Balance with ${friend.name}\n`;
+    if (Math.abs(netBalance) < 0.01) {
+      text += `Status: You and ${friend.name} are completely settled up! (₹0.00)\n\n`;
+    } else if (netBalance > 0) {
+      text += `Status: ${friend.name} owes you ${formatMoney(netBalance)}\n\n`;
+    } else {
+      text += `Status: You owe ${friend.name} ${formatMoney(Math.abs(netBalance))}\n\n`;
+    }
+
+    if (expenses.length > 0) {
+      text += `📝 Recent Shared Expenses (${expenses.length}):\n`;
+      expenses.slice(0, 10).forEach(({ expense, paidByYou }) => {
+        text += `• ${expense.date}: ${expense.description} - ${formatMoney(expense.amount)} (${
+          paidByYou ? 'You paid' : `${friend.name} paid`
+        })\n`;
+      });
+      if (expenses.length > 10) {
+        text += `... and ${expenses.length - 10} more expenses.\n`;
+      }
+    }
+
+    if (settlements.length > 0) {
+      text += `\n🤝 Payments Recorded:\n`;
+      settlements.slice(0, 5).forEach((s) => {
+        const payer = s.from_member_id === friend.id ? friend.name : 'You';
+        text += `• ${s.date}: ${payer} paid ${formatMoney(s.amount)}\n`;
+      });
+    }
+
+    return text;
+  };
+
+  const handleExportCsv = async () => {
+    if (!friend) return;
+    const csvContent = generateFriendCsv();
+    const safeTitle = friend.name.replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `${safeTitle}_ledger_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    if (Platform.OS === 'web') {
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      Alert.alert('CSV Downloaded', `Saved ${filename} to your device.`);
+    } else {
+      try {
+        const fileUri = `${FileSystem.cacheDirectory || FileSystem.documentDirectory}${filename}`;
+        await FileSystem.writeAsStringAsync(fileUri, csvContent, {
+          encoding: FileSystem.EncodingType.UTF8,
+        });
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'text/csv',
+            dialogTitle: `Export ${friend.name} Ledger CSV`,
+            UTI: 'public.comma-separated-values-text',
+          });
+        } else {
+          Alert.alert('Sharing Unavailable', 'Unable to open share sheet on this device.');
+        }
+      } catch (e: any) {
+        Alert.alert('Export Error', e?.message || 'Could not export CSV.');
+      }
+    }
+  };
+
+  const handleShareTextSummary = async () => {
+    if (!friend) return;
+    const summary = generateFriendTextSummary();
+    try {
+      await Share.share({
+        title: `Ledger with ${friend.name}`,
+        message: summary,
+      });
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to share summary');
+    }
+  };
 
   const loadData = async () => {
     if (!id) return;
@@ -103,9 +230,20 @@ export default function FriendDetailScreen() {
         options={{
           title: friend.name,
           headerRight: () => (
-            <TouchableOpacity onPress={handleDeleteFriend}>
-              <Ionicons name="trash-outline" size={20} color="#EF4444" />
-            </TouchableOpacity>
+            <View style={styles.headerRightRow}>
+              <TouchableOpacity
+                onPress={() => setShowExportModal(true)}
+                style={styles.headerActionBtn}
+              >
+                <Ionicons name="share-social-outline" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleDeleteFriend}
+                style={styles.headerActionBtn}
+              >
+                <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              </TouchableOpacity>
+            </View>
           ),
         }}
       />
@@ -291,6 +429,122 @@ export default function FriendDetailScreen() {
           }
         />
       )}
+      {/* Export / Share Modal */}
+      <Modal visible={showExportModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Export & Share</Text>
+              <TouchableOpacity onPress={() => setShowExportModal(false)}>
+                <Ionicons name="close" size={22} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.exportSubtitle}>
+              Export statements or share a formatted balance summary with {friend.name}.
+            </Text>
+
+            {/* Option 1: WhatsApp / Messaging text summary */}
+            <TouchableOpacity
+              style={styles.exportOptionCard}
+              onPress={() => {
+                setShowExportModal(false);
+                handleShareTextSummary();
+              }}
+            >
+              <View style={[styles.exportIconCircle, { backgroundColor: '#E8F8F5' }]}>
+                <Ionicons name="logo-whatsapp" size={22} color="#1cc29f" />
+              </View>
+              <View style={styles.exportOptionInfo}>
+                <Text style={styles.exportOptionTitle}>Share WhatsApp / Text Summary</Text>
+                <Text style={styles.exportOptionSub}>
+                  Send current balance, debts, and recent transactions via messaging apps.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+            </TouchableOpacity>
+
+            {/* Option 2: Export CSV Spreadsheet */}
+            <TouchableOpacity
+              style={styles.exportOptionCard}
+              onPress={() => {
+                setShowExportModal(false);
+                handleExportCsv();
+              }}
+            >
+              <View style={[styles.exportIconCircle, { backgroundColor: '#EFF6FF' }]}>
+                <Ionicons name="document-text" size={22} color="#3B82F6" />
+              </View>
+              <View style={styles.exportOptionInfo}>
+                <Text style={styles.exportOptionTitle}>Export to CSV (Excel)</Text>
+                <Text style={styles.exportOptionSub}>
+                  Download or share an itemized .csv statement of all shared expenses and payments.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+            </TouchableOpacity>
+
+            {/* Option 3: Preview text summary */}
+            <TouchableOpacity
+              style={styles.exportOptionCard}
+              onPress={() => {
+                setShowExportModal(false);
+                const summary = generateFriendTextSummary();
+                setPreviewSummaryText(summary);
+                setShowTextPreviewModal(true);
+              }}
+            >
+              <View style={[styles.exportIconCircle, { backgroundColor: '#F3F4F6' }]}>
+                <Ionicons name="eye-outline" size={22} color="#6B7280" />
+              </View>
+              <View style={styles.exportOptionInfo}>
+                <Text style={styles.exportOptionTitle}>Preview Summary Text</Text>
+                <Text style={styles.exportOptionSub}>
+                  Inspect or copy the formatted text directly to your clipboard.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Preview Summary Modal */}
+      <Modal visible={showTextPreviewModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Summary Preview</Text>
+              <TouchableOpacity onPress={() => setShowTextPreviewModal(false)}>
+                <Ionicons name="close" size={22} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <TextInput
+              style={styles.summaryPreviewInput}
+              value={previewSummaryText}
+              multiline
+              editable={false}
+              selectTextOnFocus
+            />
+
+            <View style={styles.previewBtnRow}>
+              <TouchableOpacity
+                style={styles.shareBtn}
+                onPress={() => {
+                  Share.share({
+                    title: `Balance with ${friend.name}`,
+                    message: previewSummaryText,
+                  });
+                }}
+              >
+                <Ionicons name="share-social-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.shareBtnText}>Share Text</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -523,5 +777,105 @@ const styles = StyleSheet.create({
   },
   textNeutral: {
     color: '#9CA3AF',
+  },
+  headerRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerActionBtn: {
+    padding: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCardLarge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    maxHeight: '85%',
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  exportSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  exportOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  exportIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  exportOptionInfo: {
+    flex: 1,
+  },
+  exportOptionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  exportOptionSub: {
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 16,
+  },
+  summaryPreviewInput: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: '#111827',
+    height: 220,
+    backgroundColor: '#F9FAFB',
+    marginBottom: 16,
+    textAlignVertical: 'top',
+  },
+  previewBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  shareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1cc29f',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+  },
+  shareBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

@@ -10,9 +10,14 @@ import {
   ScrollView,
   Modal,
   Alert,
+  TextInput,
+  Platform,
+  Share,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect, Stack } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import {
   getGroupById,
   getGroupMembers,
@@ -40,6 +45,127 @@ export default function GroupDetailScreen() {
   const [activeTab, setActiveTab] = useState<'expenses' | 'balances' | 'totals'>('expenses');
   const [allAvailableFriends, setAllAvailableFriends] = useState<Member[]>([]);
   const [showAddMemberModal, setShowAddMemberModal] = useState(false);
+
+  // Search & Filter
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('ALL');
+
+  // Export & Share
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showTextPreviewModal, setShowTextPreviewModal] = useState(false);
+  const [previewSummaryText, setPreviewSummaryText] = useState('');
+
+  const generateGroupCsv = (grp: Group, exps: Expense[], mems: Member[]): string => {
+    const memberMap = new Map(mems.map((m) => [m.id, m.is_user ? 'You' : m.name]));
+    const rows = [
+      ['Date', 'Description', 'Category', 'Amount (INR)', 'Paid By', 'Split Type']
+    ];
+    exps.forEach((e) => {
+      const payerName = memberMap.get(e.paid_by_member_id) || 'Unknown';
+      const cleanDesc = `"${(e.description || '').replace(/"/g, '""')}"`;
+      const cleanCat = `"${(e.category || 'General').replace(/"/g, '""')}"`;
+      rows.push([e.date, cleanDesc, cleanCat, String(e.amount), `"${payerName}"`, e.split_type]);
+    });
+    return rows.map((r) => r.join(',')).join('\n');
+  };
+
+  const generateGroupTextSummary = (
+    grp: Group,
+    exps: Expense[],
+    mems: Member[],
+    debts: SimplifiedDebt[],
+    bals: { member: Member; netBalance: number }[]
+  ): string => {
+    const memberMap = new Map(mems.map((m) => [m.id, m.is_user ? 'You' : m.name]));
+    const totalSpend = exps.reduce((sum, e) => sum + e.amount, 0);
+
+    let text = `📊 Simplify Expense: ${grp.name}\n`;
+    text += `Total Expenses: ${formatMoney(totalSpend, grp.currency)} (${exps.length} expenses)\n\n`;
+
+    if (debts.length > 0) {
+      text += `🤝 Final Settlement Plan:\n`;
+      debts.forEach((d) => {
+        const fromName = d.fromMember.is_user ? 'You' : d.fromMember.name;
+        const toName = d.toMember.is_user ? 'You' : d.toMember.name;
+        text += `• ${fromName} pays ${toName} ${formatMoney(d.amount, d.currency)}\n`;
+      });
+      text += `\n`;
+    } else {
+      text += `🤝 All balances are settled up!\n\n`;
+    }
+
+    text += `📋 Member Balances:\n`;
+    bals.forEach((b) => {
+      const name = b.member.is_user ? 'You' : b.member.name;
+      if (Math.abs(b.netBalance) < 0.01) {
+        text += `• ${name}: Settled\n`;
+      } else if (b.netBalance > 0) {
+        text += `• ${name}: Gets back ${formatMoney(b.netBalance, grp.currency)}\n`;
+      } else {
+        text += `• ${name}: Owes ${formatMoney(Math.abs(b.netBalance), grp.currency)}\n`;
+      }
+    });
+
+    if (exps.length > 0) {
+      text += `\n📝 Recent Expenses:\n`;
+      exps.slice(0, 10).forEach((e) => {
+        const payer = memberMap.get(e.paid_by_member_id) || 'Unknown';
+        text += `• ${e.date}: ${e.description} - ${formatMoney(e.amount, e.currency)} (${payer})\n`;
+      });
+      if (exps.length > 10) {
+        text += `... and ${exps.length - 10} more expenses.\n`;
+      }
+    }
+
+    return text;
+  };
+
+  const handleExportCsv = async () => {
+    if (!group) return;
+    const csvContent = generateGroupCsv(group, expenses, members);
+    const safeTitle = group.name.replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `${safeTitle}_expenses_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    if (Platform.OS === 'web') {
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      Alert.alert('CSV Downloaded', `Saved ${filename} to your device.`);
+    } else {
+      try {
+        const fileUri = `${FileSystem.cacheDirectory || FileSystem.documentDirectory}${filename}`;
+        await FileSystem.writeAsStringAsync(fileUri, csvContent, { encoding: FileSystem.EncodingType.UTF8 });
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'text/csv',
+            dialogTitle: `Export ${group.name} Expenses CSV`,
+            UTI: 'public.comma-separated-values-text',
+          });
+        } else {
+          Alert.alert('Sharing Unavailable', 'Unable to open share sheet on this device.');
+        }
+      } catch (e: any) {
+        Alert.alert('Export Error', e?.message || 'Could not export CSV.');
+      }
+    }
+  };
+
+  const handleShareTextSummary = async () => {
+    if (!group) return;
+    const summary = generateGroupTextSummary(group, expenses, members, simplifiedDebtsList, balances);
+    try {
+      await Share.share({
+        title: `${group.name} Expense Summary`,
+        message: summary,
+      });
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to share summary');
+    }
+  };
 
   const loadGroupDetails = async () => {
     if (!id) return;
@@ -119,15 +245,49 @@ export default function GroupDetailScreen() {
     );
   };
 
+  const groupCategories = [
+    'ALL',
+    ...Array.from(
+      new Set([
+        'General',
+        'Food',
+        'Groceries',
+        'Travel',
+        'Utilities',
+        'Entertainment',
+        ...expenses.map((e) => e.category || 'General'),
+      ])
+    ),
+  ];
+
+  const filteredExpenses = expenses.filter((e) => {
+    const matchesSearch = e.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory =
+      selectedCategory === 'ALL' ||
+      (e.category || 'General').toLowerCase() === selectedCategory.toLowerCase();
+    return matchesSearch && matchesCategory;
+  });
+
   return (
     <View style={styles.container}>
       <Stack.Screen
         options={{
           title: group?.name || 'Group',
           headerRight: () => (
-            <TouchableOpacity onPress={handleDeleteGroup}>
-              <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
+            <View style={styles.headerRightRow}>
+              <TouchableOpacity
+                onPress={() => setShowExportModal(true)}
+                style={styles.headerActionBtn}
+              >
+                <Ionicons name="share-social-outline" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleDeleteGroup}
+                style={styles.headerActionBtn}
+              >
+                <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
           ),
         }}
       />
@@ -220,50 +380,111 @@ export default function GroupDetailScreen() {
 
       {/* Tab Content */}
       {activeTab === 'expenses' && (
-        <FlatList
-          data={expenses}
-          keyExtractor={(item) => item.id}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={loadGroupDetails} colors={['#1cc29f']} />}
-          contentContainerStyle={styles.listPadding}
-          renderItem={({ item }) => {
-            const payer = members.find((m) => m.id === item.paid_by_member_id);
-            return (
-              <TouchableOpacity
-                style={styles.expenseCard}
-                activeOpacity={0.7}
-                onPress={() => router.push(`/expense-detail/${item.id}`)}
-              >
-                <View style={styles.dateBox}>
-                  <Text style={styles.dateMonth}>
-                    {new Date(item.date).toLocaleDateString('en-US', { month: 'short' })}
-                  </Text>
-                  <Text style={styles.dateDay}>
-                    {new Date(item.date).toLocaleDateString('en-US', { day: 'numeric' })}
-                  </Text>
-                </View>
-
-                <View style={styles.expenseInfo}>
-                  <Text style={styles.expenseDesc}>{item.description}</Text>
-                  <Text style={styles.expensePayer}>
-                    {payer?.is_user === 1 ? 'You' : payer?.name} paid{' '}
-                    {formatMoney(item.amount, item.currency)}
-                  </Text>
-                </View>
-
-                <View style={styles.expenseSplitType}>
-                  <Text style={styles.splitTypeBadge}>{item.split_type}</Text>
-                </View>
-              </TouchableOpacity>
-            );
-          }}
-          ListEmptyComponent={
-            <View style={styles.emptyBox}>
-              <MaterialCommunityIcons name="receipt-text-outline" size={54} color="#D1D5DB" />
-              <Text style={styles.emptyTitle}>No expenses yet</Text>
-              <Text style={styles.emptySub}>{"Tap '+ Add Expense' below to add your first expense!"}</Text>
+        <View style={{ flex: 1 }}>
+          {/* Search Bar & Category Filter */}
+          <View style={styles.filterSection}>
+            <View style={styles.searchBox}>
+              <Ionicons name="search" size={18} color="#9CA3AF" />
+              <TextInput
+                placeholder="Search expenses in this group..."
+                placeholderTextColor="#9CA3AF"
+                style={styles.searchInput}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+                </TouchableOpacity>
+              )}
             </View>
-          }
-        />
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.categoryChipsRow}
+            >
+              {groupCategories.map((cat) => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[
+                    styles.categoryChip,
+                    selectedCategory === cat && styles.categoryChipActive,
+                  ]}
+                  onPress={() => setSelectedCategory(cat)}
+                >
+                  <Text
+                    style={[
+                      styles.categoryChipText,
+                      selectedCategory === cat && styles.categoryChipTextActive,
+                    ]}
+                  >
+                    {cat}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          <FlatList
+            data={filteredExpenses}
+            keyExtractor={(item) => item.id}
+            refreshControl={
+              <RefreshControl
+                refreshing={loading}
+                onRefresh={loadGroupDetails}
+                colors={['#1cc29f']}
+              />
+            }
+            contentContainerStyle={styles.listPadding}
+            renderItem={({ item }) => {
+              const payer = members.find((m) => m.id === item.paid_by_member_id);
+              return (
+                <TouchableOpacity
+                  style={styles.expenseCard}
+                  activeOpacity={0.7}
+                  onPress={() => router.push(`/expense-detail/${item.id}`)}
+                >
+                  <View style={styles.dateBox}>
+                    <Text style={styles.dateMonth}>
+                      {new Date(item.date).toLocaleDateString('en-US', { month: 'short' })}
+                    </Text>
+                    <Text style={styles.dateDay}>
+                      {new Date(item.date).toLocaleDateString('en-US', { day: 'numeric' })}
+                    </Text>
+                  </View>
+
+                  <View style={styles.expenseInfo}>
+                    <Text style={styles.expenseDesc}>{item.description}</Text>
+                    <Text style={styles.expensePayer}>
+                      {payer?.is_user === 1 ? 'You' : payer?.name} paid{' '}
+                      {formatMoney(item.amount, item.currency)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.expenseSplitType}>
+                    <Text style={styles.splitTypeBadge}>{item.split_type}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            }}
+            ListEmptyComponent={
+              <View style={styles.emptyBox}>
+                <MaterialCommunityIcons name="receipt-text-outline" size={54} color="#D1D5DB" />
+                <Text style={styles.emptyTitle}>
+                  {searchQuery || selectedCategory !== 'ALL'
+                    ? 'No matching expenses'
+                    : 'No expenses yet'}
+                </Text>
+                <Text style={styles.emptySub}>
+                  {searchQuery || selectedCategory !== 'ALL'
+                    ? 'Try clearing your search or category filter.'
+                    : "Tap '+ Add Expense' below to add your first expense!"}
+                </Text>
+              </View>
+            }
+          />
+        </View>
       )}
 
       {activeTab === 'balances' && (
@@ -445,6 +666,129 @@ export default function GroupDetailScreen() {
                 </TouchableOpacity>
               </View>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Export / Share Modal */}
+      <Modal visible={showExportModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Export & Share</Text>
+              <TouchableOpacity onPress={() => setShowExportModal(false)}>
+                <Ionicons name="close" size={22} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.exportSubtitle}>
+              Export {group?.name} statements or share a formatted summary directly to WhatsApp.
+            </Text>
+
+            {/* Option 1: WhatsApp / Messaging text summary */}
+            <TouchableOpacity
+              style={styles.exportOptionCard}
+              onPress={() => {
+                setShowExportModal(false);
+                handleShareTextSummary();
+              }}
+            >
+              <View style={[styles.exportIconCircle, { backgroundColor: '#E8F8F5' }]}>
+                <Ionicons name="logo-whatsapp" size={22} color="#1cc29f" />
+              </View>
+              <View style={styles.exportOptionInfo}>
+                <Text style={styles.exportOptionTitle}>Share WhatsApp / Text Summary</Text>
+                <Text style={styles.exportOptionSub}>
+                  Share a clean breakdown of balances, debts, and recent expenses via messaging apps.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+            </TouchableOpacity>
+
+            {/* Option 2: Export CSV Spreadsheet */}
+            <TouchableOpacity
+              style={styles.exportOptionCard}
+              onPress={() => {
+                setShowExportModal(false);
+                handleExportCsv();
+              }}
+            >
+              <View style={[styles.exportIconCircle, { backgroundColor: '#EFF6FF' }]}>
+                <Ionicons name="document-text" size={22} color="#3B82F6" />
+              </View>
+              <View style={styles.exportOptionInfo}>
+                <Text style={styles.exportOptionTitle}>Export to CSV (Excel)</Text>
+                <Text style={styles.exportOptionSub}>
+                  Download or share an itemized .csv spreadsheet of all expenses in this group.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+            </TouchableOpacity>
+
+            {/* Option 3: Preview text summary */}
+            <TouchableOpacity
+              style={styles.exportOptionCard}
+              onPress={() => {
+                setShowExportModal(false);
+                const summary = generateGroupTextSummary(
+                  group!,
+                  expenses,
+                  members,
+                  simplifiedDebtsList,
+                  balances
+                );
+                setPreviewSummaryText(summary);
+                setShowTextPreviewModal(true);
+              }}
+            >
+              <View style={[styles.exportIconCircle, { backgroundColor: '#F3F4F6' }]}>
+                <Ionicons name="eye-outline" size={22} color="#6B7280" />
+              </View>
+              <View style={styles.exportOptionInfo}>
+                <Text style={styles.exportOptionTitle}>Preview Summary Text</Text>
+                <Text style={styles.exportOptionSub}>
+                  Inspect or copy the formatted text directly to your clipboard.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Preview Summary Modal */}
+      <Modal visible={showTextPreviewModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Summary Preview</Text>
+              <TouchableOpacity onPress={() => setShowTextPreviewModal(false)}>
+                <Ionicons name="close" size={22} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <TextInput
+              style={styles.summaryPreviewInput}
+              value={previewSummaryText}
+              multiline
+              editable={false}
+              selectTextOnFocus
+            />
+
+            <View style={styles.previewBtnRow}>
+              <TouchableOpacity
+                style={styles.shareBtn}
+                onPress={() => {
+                  Share.share({
+                    title: `${group?.name} Expense Summary`,
+                    message: previewSummaryText,
+                  });
+                }}
+              >
+                <Ionicons name="share-social-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.shareBtnText}>Share Text</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -890,5 +1234,131 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
+  },
+  headerRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerActionBtn: {
+    padding: 4,
+  },
+  filterSection: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 38,
+    marginBottom: 8,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#111827',
+  },
+  categoryChipsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  categoryChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: '#F3F4F6',
+  },
+  categoryChipActive: {
+    backgroundColor: '#1cc29f',
+  },
+  categoryChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  categoryChipTextActive: {
+    color: '#FFFFFF',
+  },
+  modalCardLarge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    maxHeight: '85%',
+  },
+  exportSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  exportOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  exportIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  exportOptionInfo: {
+    flex: 1,
+  },
+  exportOptionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  exportOptionSub: {
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 16,
+  },
+  summaryPreviewInput: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: '#111827',
+    height: 220,
+    backgroundColor: '#F9FAFB',
+    marginBottom: 16,
+    textAlignVertical: 'top',
+  },
+  previewBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  shareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1cc29f',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+  },
+  shareBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

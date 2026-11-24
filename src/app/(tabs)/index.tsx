@@ -7,16 +7,18 @@ import {
   TouchableOpacity,
   RefreshControl,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { getOverallUserBalance } from '../../db/queries';
+import { getOverallUserBalance, deleteMember } from '../../db/queries';
 import { Member } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
 
 export default function FriendsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [balanceFilter, setBalanceFilter] = useState<'ALL' | 'OWED' | 'OWE' | 'SETTLED'>('ALL');
   const [data, setData] = useState<{
     totalOwedToYou: number;
     totalYouOwe: number;
@@ -47,6 +49,31 @@ export default function FriendsScreen() {
     }, [])
   );
 
+  const filteredFriends = data.friendBalances.filter((item) => {
+    if (balanceFilter === 'OWED') return item.balance > 0.01;
+    if (balanceFilter === 'OWE') return item.balance < -0.01;
+    if (balanceFilter === 'SETTLED') return Math.abs(item.balance) < 0.01;
+    return true;
+  });
+
+  const handleDeleteFriend = (member: Member) => {
+    Alert.alert(
+      'Remove Friend',
+      `Are you sure you want to remove ${member.name}? This will remove them and their shared transactions.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteMember(member.id);
+            loadData();
+          },
+        },
+      ]
+    );
+  };
+
   const renderFriendItem = ({ item }: { item: { member: Member; balance: number } }) => {
     const isPositive = item.balance > 0;
     const isSettled = Math.abs(item.balance) < 0.01;
@@ -61,6 +88,7 @@ export default function FriendsScreen() {
             params: { friendId: item.member.id, friendName: item.member.name },
           });
         }}
+        onLongPress={() => handleDeleteFriend(item.member)}
       >
         <View style={[styles.avatar, { backgroundColor: item.member.avatar_color || '#1cc29f' }]}>
           <Text style={styles.avatarText}>{item.member.name.charAt(0).toUpperCase()}</Text>
@@ -142,12 +170,42 @@ export default function FriendsScreen() {
 
       {/* Friends List */}
       <View style={styles.listSection}>
-        <View style={styles.sectionHeader}>
+        <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>FRIENDS</Text>
+          <Text style={styles.sectionTip}>Long press to remove</Text>
+        </View>
+
+        {/* Balance Quick Filter Chips */}
+        <View style={styles.filterChipRow}>
+          {(['ALL', 'OWED', 'OWE', 'SETTLED'] as const).map((filter) => (
+            <TouchableOpacity
+              key={filter}
+              style={[
+                styles.balanceChip,
+                balanceFilter === filter && styles.balanceChipActive,
+              ]}
+              onPress={() => setBalanceFilter(filter)}
+            >
+              <Text
+                style={[
+                  styles.balanceChipText,
+                  balanceFilter === filter && styles.balanceChipTextActive,
+                ]}
+              >
+                {filter === 'ALL'
+                  ? 'All'
+                  : filter === 'OWED'
+                  ? 'Owed to you'
+                  : filter === 'OWE'
+                  ? 'You owe'
+                  : 'Settled'}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         <FlatList
-          data={data.friendBalances}
+          data={filteredFriends}
           keyExtractor={(item) => item.member.id}
           renderItem={renderFriendItem}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={loadData} colors={['#1cc29f']} />}
@@ -155,9 +213,13 @@ export default function FriendsScreen() {
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <MaterialCommunityIcons name="account-group-outline" size={56} color="#C7C7CC" />
-              <Text style={styles.emptyTitle}>No friends added yet</Text>
+              <Text style={styles.emptyTitle}>
+                {balanceFilter === 'ALL' ? 'No friends added yet' : 'No friends matching this filter'}
+              </Text>
               <Text style={styles.emptySub}>
-                Tap the "+ Add Friend" button above to start sharing expenses!
+                {balanceFilter === 'ALL'
+                  ? 'Tap the "+ Add Friend" button above to start sharing expenses!'
+                  : 'Try switching the filter back to "All"'}
               </Text>
             </View>
           }
@@ -262,15 +324,47 @@ const styles = StyleSheet.create({
   listSection: {
     flex: 1,
   },
-  sectionHeader: {
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 6,
   },
   sectionTitle: {
     fontSize: 12,
     fontWeight: '700',
     color: '#6B7280',
     letterSpacing: 0.5,
+  },
+  sectionTip: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+  },
+  filterChipRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    gap: 6,
+  },
+  balanceChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: '#E5E7EB',
+  },
+  balanceChipActive: {
+    backgroundColor: '#1cc29f',
+  },
+  balanceChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#4B5563',
+  },
+  balanceChipTextActive: {
+    color: '#FFFFFF',
   },
   listContent: {
     paddingBottom: 90,

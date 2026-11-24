@@ -127,6 +127,56 @@ export async function addFriend(name: string, email?: string): Promise<Member> {
   return newMember;
 }
 
+export async function updateCurrentUser(name: string, email?: string, avatarColor?: string): Promise<Member> {
+  const members = await getItem<Member[]>(STORAGE_KEYS.MEMBERS, []);
+  const idx = members.findIndex((m) => m.is_user === 1);
+  if (idx === -1) throw new Error('User not found');
+
+  members[idx].name = name;
+  if (email !== undefined) members[idx].email = email;
+  if (avatarColor) members[idx].avatar_color = avatarColor;
+
+  await setItem(STORAGE_KEYS.MEMBERS, members);
+  return members[idx];
+}
+
+export async function deleteMember(memberId: string): Promise<void> {
+  const members = await getItem<Member[]>(STORAGE_KEYS.MEMBERS, []);
+  const groupMembers = await getItem<{ group_id: string; member_id: string }[]>(STORAGE_KEYS.GROUP_MEMBERS, []);
+  const expenses = await getItem<Expense[]>(STORAGE_KEYS.EXPENSES, []);
+  const splits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);
+  const settlements = await getItem<Settlement[]>(STORAGE_KEYS.SETTLEMENTS, []);
+
+  await setItem(STORAGE_KEYS.MEMBERS, members.filter((m) => m.id !== memberId));
+  await setItem(STORAGE_KEYS.GROUP_MEMBERS, groupMembers.filter((gm) => gm.member_id !== memberId));
+  await setItem(STORAGE_KEYS.EXPENSES, expenses.filter((e) => e.paid_by_member_id !== memberId));
+  await setItem(STORAGE_KEYS.EXPENSE_SPLITS, splits.filter((s) => s.member_id !== memberId));
+  await setItem(STORAGE_KEYS.SETTLEMENTS, settlements.filter((s) => s.from_member_id !== memberId && s.to_member_id !== memberId));
+}
+
+export async function deleteGroup(groupId: string): Promise<void> {
+  const groups = await getItem<Group[]>(STORAGE_KEYS.GROUPS, []);
+  const groupMembers = await getItem<{ group_id: string; member_id: string }[]>(STORAGE_KEYS.GROUP_MEMBERS, []);
+  const expenses = await getItem<Expense[]>(STORAGE_KEYS.EXPENSES, []);
+  const splits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);
+  const settlements = await getItem<Settlement[]>(STORAGE_KEYS.SETTLEMENTS, []);
+  const defaultSplits = await getItem<DefaultGroupSplit[]>(STORAGE_KEYS.DEFAULT_SPLITS, []);
+
+  const groupExpenseIds = new Set(expenses.filter((e) => e.group_id === groupId).map((e) => e.id));
+
+  await setItem(STORAGE_KEYS.GROUPS, groups.filter((g) => g.id !== groupId));
+  await setItem(STORAGE_KEYS.GROUP_MEMBERS, groupMembers.filter((gm) => gm.group_id !== groupId));
+  await setItem(STORAGE_KEYS.EXPENSES, expenses.filter((e) => e.group_id !== groupId));
+  await setItem(STORAGE_KEYS.EXPENSE_SPLITS, splits.filter((s) => !groupExpenseIds.has(s.expense_id)));
+  await setItem(STORAGE_KEYS.SETTLEMENTS, settlements.filter((s) => s.group_id !== groupId));
+  await setItem(STORAGE_KEYS.DEFAULT_SPLITS, defaultSplits.filter((ds) => ds.group_id !== groupId));
+}
+
+export async function deleteSettlement(settlementId: string): Promise<void> {
+  const settlements = await getItem<Settlement[]>(STORAGE_KEYS.SETTLEMENTS, []);
+  await setItem(STORAGE_KEYS.SETTLEMENTS, settlements.filter((s) => s.id !== settlementId));
+}
+
 // ==================== GROUPS ====================
 export async function getAllGroups(): Promise<Group[]> {
   const groups = await getItem<Group[]>(STORAGE_KEYS.GROUPS, []);

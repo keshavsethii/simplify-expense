@@ -18,6 +18,7 @@ import {
   getGroupBalances,
   getExpenses,
   updateGroupSimplifyDebts,
+  deleteGroup,
 } from '../../db/queries';
 import { Group, Member, Expense, SimplifiedDebt } from '../../db/types';
 import { simplifyDebts } from '../../utils/simplifyDebts';
@@ -78,9 +79,38 @@ export default function GroupDetailScreen() {
     setGroup({ ...group, simplify_debts: val ? 1 : 0 });
   };
 
+  const handleDeleteGroup = () => {
+    Alert.alert(
+      'Delete Group',
+      `Are you sure you want to delete "${group?.name}"? All associated expenses and balances will be removed.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            if (group?.id) {
+              await deleteGroup(group.id);
+              router.back();
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: group?.name || 'Group' }} />
+      <Stack.Screen
+        options={{
+          title: group?.name || 'Group',
+          headerRight: () => (
+            <TouchableOpacity onPress={handleDeleteGroup}>
+              <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+          ),
+        }}
+      />
 
       {/* Header Info */}
       <View style={styles.headerCard}>

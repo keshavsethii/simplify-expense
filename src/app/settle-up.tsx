@@ -165,6 +165,37 @@ export default function SettleUpScreen() {
           />
         </View>
 
+        {/* Quick Amount Presets */}
+        <View style={styles.presetsRow}>
+          {params.amount && parseFloat(params.amount) > 0 && (
+            <>
+              <TouchableOpacity
+                style={styles.presetChip}
+                onPress={() => setAmount(String(params.amount))}
+              >
+                <Text style={styles.presetChipText}>Full ({formatMoney(parseFloat(params.amount))})</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.presetChip}
+                onPress={() =>
+                  setAmount(String(Math.round((parseFloat(params.amount!) / 2) * 100) / 100))
+                }
+              >
+                <Text style={styles.presetChipText}>Half ({formatMoney(parseFloat(params.amount) / 2)})</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {['100', '500', '1000', '2000'].map((val) => (
+            <TouchableOpacity
+              key={val}
+              style={styles.presetChip}
+              onPress={() => setAmount(val)}
+            >
+              <Text style={styles.presetChipText}>₹{val}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
         {/* Notes */}
         <Text style={styles.label}>Notes (Optional)</Text>
         <TextInput
@@ -308,6 +339,26 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '800',
     color: '#111827',
+  },
+  presetsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  presetChip: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  presetChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4B5563',
   },
   notesInput: {
     borderWidth: 1,

@@ -19,6 +19,7 @@ import * as Sharing from 'expo-sharing';
 import { getFriendLedger, deleteMember, deleteSettlement, getCurrentUser, getSharedGroups } from '../../db/queries';
 import { Member, Expense, Settlement } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
+import { parseLocalDate } from '../../utils/date';
 
 export default function FriendDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -363,10 +364,10 @@ export default function FriendDetailScreen() {
             >
               <View style={styles.dateBox}>
                 <Text style={styles.dateMonth}>
-                  {new Date(item.expense.date).toLocaleDateString('en-US', { month: 'short' })}
+                  {parseLocalDate(item.expense.date).toLocaleDateString('en-US', { month: 'short' })}
                 </Text>
                 <Text style={styles.dateDay}>
-                  {new Date(item.expense.date).toLocaleDateString('en-US', { day: 'numeric' })}
+                  {parseLocalDate(item.expense.date).toLocaleDateString('en-US', { day: 'numeric' })}
                 </Text>
               </View>
 

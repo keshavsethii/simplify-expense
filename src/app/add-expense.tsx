@@ -31,6 +31,7 @@ import {
 } from '../db/queries';
 import { Member, Group, CustomCategory, ExpenseTemplate } from '../db/types';
 import { formatMoney, CURRENCY_SYMBOL, CURRENCY_CODE } from '../utils/currency';
+import { getLocalDateString } from '../utils/date';
 
 export default function AddExpenseScreen() {
   const router = useRouter();
@@ -40,7 +41,7 @@ export default function AddExpenseScreen() {
 
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().substring(0, 10));
+  const [date, setDate] = useState(getLocalDateString());
   const [category, setCategory] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(params.groupId || null);
 
@@ -96,13 +97,22 @@ export default function AddExpenseScreen() {
 
   const multiPayerStatus = calculateMultiPayerStatus();
 
-  const handleApplyTemplate = (tmpl: ExpenseTemplate) => {
+  const handleApplyTemplate = async (tmpl: ExpenseTemplate) => {
+    setShowTemplatesModal(false);
+    if (tmpl.group_id && groups.some((g) => g.id === tmpl.group_id)) {
+      setSelectedGroupId(tmpl.group_id);
+      await loadMembersForGroup(tmpl.group_id, currentUser);
+    }
     setDescription(tmpl.description);
     setAmount(String(tmpl.amount));
-    setCategory(tmpl.category);
+    if (categories.some((c) => c.name === tmpl.category)) {
+      setCategory(tmpl.category);
+    } else if (categories.length > 0) {
+      setCategory(categories[0].name);
+    } else {
+      setCategory('');
+    }
     setSplitType(tmpl.split_type);
-    if (tmpl.group_id) setSelectedGroupId(tmpl.group_id);
-    setShowTemplatesModal(false);
   };
 
   const handleSaveAsTemplate = () => {
@@ -376,9 +386,13 @@ export default function AddExpenseScreen() {
     } else if (splitType === 'EXACT') {
       let totalAssigned = 0;
       for (const mId of selectedMemberIds) {
-        const val = parseFloat(customValues[mId] || '0');
+        const val = parseFloat(customValues[mId] || '0') || 0;
+        if (val < 0) {
+          Alert.alert('Invalid Amount', 'Split amounts cannot be negative.');
+          return;
+        }
         totalAssigned += val;
-        splits.push({ memberId: mId, amount: val });
+        splits.push({ memberId: mId, amount: Math.round(val * 100) / 100 });
       }
 
       if (Math.abs(totalAssigned - parsedAmount) > 0.05) {
@@ -391,7 +405,11 @@ export default function AddExpenseScreen() {
     } else if (splitType === 'PERCENT') {
       let totalPct = 0;
       for (const mId of selectedMemberIds) {
-        const pct = parseFloat(customValues[mId] || '0');
+        const pct = parseFloat(customValues[mId] || '0') || 0;
+        if (pct < 0) {
+          Alert.alert('Invalid Percentage', 'Percentages cannot be negative.');
+          return;
+        }
         totalPct += pct;
       }
       if (Math.abs(totalPct - 100) > 0.5) {
@@ -401,7 +419,7 @@ export default function AddExpenseScreen() {
 
       let remaining = parsedAmount;
       selectedMemberIds.forEach((mId, idx) => {
-        const pct = parseFloat(customValues[mId] || '0');
+        const pct = parseFloat(customValues[mId] || '0') || 0;
         if (idx === selectedMemberIds.length - 1) {
           splits.push({
             memberId: mId,
@@ -417,7 +435,12 @@ export default function AddExpenseScreen() {
     } else if (splitType === 'SHARES') {
       let totalShares = 0;
       for (const mId of selectedMemberIds) {
-        const sh = parseFloat(customValues[mId] || '1');
+        const raw = customValues[mId];
+        const sh = raw === undefined || raw === '' ? 1 : parseFloat(raw) || 0;
+        if (sh < 0) {
+          Alert.alert('Invalid Shares', 'Shares cannot be negative.');
+          return;
+        }
         totalShares += sh;
       }
       if (totalShares <= 0) {
@@ -427,7 +450,8 @@ export default function AddExpenseScreen() {
 
       let remaining = parsedAmount;
       selectedMemberIds.forEach((mId, idx) => {
-        const sh = parseFloat(customValues[mId] || '1');
+        const raw = customValues[mId];
+        const sh = raw === undefined || raw === '' ? 1 : parseFloat(raw) || 0;
         if (idx === selectedMemberIds.length - 1) {
           splits.push({
             memberId: mId,
@@ -450,11 +474,15 @@ export default function AddExpenseScreen() {
     }
 
     let payersJson: string | undefined = undefined;
+    let effectivePayerId = payerId || currentUser?.id || '';
     if (isMultiPayer) {
       const payersList = Object.entries(payerAmounts)
         .map(([mId, amt]) => ({ member_id: mId, amount: parseFloat(amt) || 0 }))
         .filter((p) => p.amount > 0);
       payersJson = JSON.stringify(payersList);
+      if (payersList.length > 0) {
+        effectivePayerId = payersList[0].member_id;
+      }
     }
 
     try {
@@ -465,9 +493,9 @@ export default function AddExpenseScreen() {
           description: description.trim(),
           amount: parsedAmount,
           currency: CURRENCY_CODE,
-          date: date.trim() || new Date().toISOString().substring(0, 10),
+          date: date.trim() || getLocalDateString(),
           category,
-          paidByMemberId: payerId || currentUser?.id || '',
+          paidByMemberId: effectivePayerId,
           splitType,
           payersJson,
           splits,
@@ -478,9 +506,9 @@ export default function AddExpenseScreen() {
           description: description.trim(),
           amount: parsedAmount,
           currency: CURRENCY_CODE,
-          date: date.trim() || new Date().toISOString().substring(0, 10),
+          date: date.trim() || getLocalDateString(),
           category,
-          paidByMemberId: payerId || currentUser?.id || '',
+          paidByMemberId: effectivePayerId,
           splitType,
           payersJson,
           splits,
@@ -788,7 +816,7 @@ export default function AddExpenseScreen() {
             />
             <TouchableOpacity
               style={styles.todayBtn}
-              onPress={() => setDate(new Date().toISOString().substring(0, 10))}
+              onPress={() => setDate(getLocalDateString())}
             >
               <Text style={styles.todayBtnText}>Today</Text>
             </TouchableOpacity>
@@ -956,7 +984,7 @@ export default function AddExpenseScreen() {
                     >
                       <Text style={styles.templateRowTitle}>{tmpl.title}</Text>
                       <Text style={styles.templateRowDesc}>
-                        {tmpl.description} • {tmpl.category}
+                        {tmpl.category ? `${tmpl.description} • ${tmpl.category}` : tmpl.description}
                       </Text>
                       <Text style={styles.templateRowAmount}>
                         {formatMoney(tmpl.amount)} ({tmpl.split_type})

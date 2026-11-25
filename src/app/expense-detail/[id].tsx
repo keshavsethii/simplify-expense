@@ -107,9 +107,11 @@ export default function ExpenseDetailScreen() {
       />
 
       <View style={styles.card}>
-        <View style={styles.categoryBadge}>
-          <Text style={styles.categoryBadgeText}>{expense.category.toUpperCase()}</Text>
-        </View>
+        {!!expense.category && expense.category.trim() !== '' && (
+          <View style={styles.categoryBadge}>
+            <Text style={styles.categoryBadgeText}>{expense.category.toUpperCase()}</Text>
+          </View>
+        )}
 
         <Text style={styles.description}>{expense.description}</Text>
         <Text style={styles.amount}>{formatMoney(expense.amount, expense.currency)}</Text>

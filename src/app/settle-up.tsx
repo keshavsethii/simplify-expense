@@ -21,6 +21,7 @@ import {
 } from '../db/queries';
 import { Member, Group } from '../db/types';
 import { formatMoney, CURRENCY_SYMBOL, CURRENCY_CODE } from '../utils/currency';
+import { getLocalDateString } from '../utils/date';
 
 export default function SettleUpScreen() {
   const router = useRouter();
@@ -138,6 +139,10 @@ export default function SettleUpScreen() {
 
   const handleSettle = async () => {
     const parsedAmount = parseFloat(amount);
+    if (!fromMemberId || !toMemberId) {
+      Alert.alert('Select Members', 'Please select both who paid and who received.');
+      return;
+    }
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
       Alert.alert('Invalid Amount', 'Please enter a valid settlement amount.');
       return;
@@ -154,7 +159,7 @@ export default function SettleUpScreen() {
         toMemberId,
         amount: parsedAmount,
         currency: CURRENCY_CODE,
-        date: new Date().toISOString().substring(0, 10),
+        date: getLocalDateString(),
         notes: notes.trim() || undefined,
       });
 

@@ -31,10 +31,12 @@ import {
   getExpensePaidMap,
   getSettlements,
   deleteSettlement,
+  getDirectGroupDebts,
 } from '../../db/queries';
 import { Group, Member, Expense, Settlement, SimplifiedDebt } from '../../db/types';
 import { simplifyDebts } from '../../utils/simplifyDebts';
 import { formatMoney } from '../../utils/currency';
+import { parseLocalDate } from '../../utils/date';
 
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -66,9 +68,14 @@ export default function GroupDetailScreen() {
       ['Date', 'Description', 'Category', 'Amount (INR)', 'Paid By', 'Split Type']
     ];
     exps.forEach((e) => {
-      const payerName = memberMap.get(e.paid_by_member_id) || 'Unknown';
+      const paidMap = getExpensePaidMap(e);
+      const payerEntries = Object.entries(paidMap).filter(([, amt]) => amt > 0);
+      const payerName =
+        payerEntries.length > 1
+          ? payerEntries.map(([mId, amt]) => `${memberMap.get(mId) || 'Unknown'} (${amt})`).join(', ')
+          : memberMap.get(e.paid_by_member_id) || 'Unknown';
       const cleanDesc = `"${(e.description || '').replace(/"/g, '""')}"`;
-      const cleanCat = `"${(e.category || 'General').replace(/"/g, '""')}"`;
+      const cleanCat = `"${(e.category || '').replace(/"/g, '""')}"`;
       rows.push([e.date, cleanDesc, cleanCat, String(e.amount), `"${payerName}"`, e.split_type]);
     });
     return rows.map((r) => r.join(',')).join('\n');
@@ -196,13 +203,18 @@ export default function GroupDetailScreen() {
       const grpSettlements = await getSettlements(id);
       setSettlements(grpSettlements);
 
-      // Compute simplified debts
-      const netBalancesMap: Record<string, number> = {};
-      bals.forEach((b) => {
-        netBalancesMap[b.member.id] = b.netBalance;
-      });
-      const simplified = simplifyDebts(mems, netBalancesMap, grp.currency);
-      setSimplifiedDebtsList(simplified);
+      // Compute debts (simplified vs direct pairwise)
+      if (grp.simplify_debts === 1) {
+        const netBalancesMap: Record<string, number> = {};
+        bals.forEach((b) => {
+          netBalancesMap[b.member.id] = b.netBalance;
+        });
+        const simplified = simplifyDebts(mems, netBalancesMap, grp.currency);
+        setSimplifiedDebtsList(simplified);
+      } else {
+        const direct = await getDirectGroupDebts(id, mems, grp.currency);
+        setSimplifiedDebtsList(direct);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -231,6 +243,7 @@ export default function GroupDetailScreen() {
     if (!group) return;
     await updateGroupSimplifyDebts(group.id, val);
     setGroup({ ...group, simplify_debts: val ? 1 : 0 });
+    await loadGroupDetails();
   };
 
   const handleDeleteGroup = () => {
@@ -611,10 +624,10 @@ export default function GroupDetailScreen() {
                 >
                   <View style={styles.dateBox}>
                     <Text style={styles.dateMonth}>
-                      {new Date(exp.date).toLocaleDateString('en-US', { month: 'short' })}
+                      {parseLocalDate(exp.date).toLocaleDateString('en-US', { month: 'short' })}
                     </Text>
                     <Text style={styles.dateDay}>
-                      {new Date(exp.date).toLocaleDateString('en-US', { day: 'numeric' })}
+                      {parseLocalDate(exp.date).toLocaleDateString('en-US', { day: 'numeric' })}
                     </Text>
                   </View>
 
@@ -704,11 +717,14 @@ export default function GroupDetailScreen() {
           <View style={styles.simplifiedCard}>
             <View style={styles.simplifiedHeader}>
               <Ionicons name="sparkles" size={20} color="#1cc29f" />
-              <Text style={styles.simplifiedHeaderText}>Debt Minimization Plan</Text>
+              <Text style={styles.simplifiedHeaderText}>
+                {group?.simplify_debts === 1 ? 'Debt Minimization Plan' : 'Direct Pairwise Debts'}
+              </Text>
             </View>
             <Text style={styles.simplifiedDesc}>
-              Using the graph-based simplification algorithm, this shows the fewest payments needed
-              for everyone in this group to be completely square.
+              {group?.simplify_debts === 1
+                ? 'Using the graph-based simplification algorithm, this shows the fewest payments needed for everyone in this group to be completely square.'
+                : 'Simplify Group Debts is turned off, so debts are shown directly between original expense pairs.'}
             </Text>
 
             {simplifiedDebtsList.length > 0 ? (

@@ -11,6 +11,7 @@ import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getExpenses, getCurrentUser, getExpenseSplits, getAllCategories } from '../../db/queries';
 import { formatMoney } from '../../utils/currency';
+import { getLocalMonthPrefix } from '../../utils/date';
 
 interface CategorySpend {
   category: string;
@@ -36,7 +37,7 @@ export default function AnalyticsScreen() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewScope, setViewScope] = useState<'MONTH' | 'ALL'>('MONTH');
 
-  const selectedMonthPrefix = currentDate.toISOString().substring(0, 7); // e.g. '2026-11'
+  const selectedMonthPrefix = getLocalMonthPrefix(currentDate); // e.g. '2026-11'
   const monthDisplayTitle = currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   const handlePrevMonth = () => {

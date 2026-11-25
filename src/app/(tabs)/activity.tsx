@@ -22,6 +22,7 @@ import {
 } from '../../db/queries';
 import { Expense, Settlement } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
+import { getLocalDateString, getLocalMonthPrefix } from '../../utils/date';
 
 type ActivityItem =
   | {
@@ -168,8 +169,8 @@ export default function ActivityScreen() {
   const activeCategory = categories.includes(selectedCategory) ? selectedCategory : 'ALL';
 
   const now = new Date();
-  const currentMonthStr = now.toISOString().substring(0, 7);
-  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+  const currentMonthStr = getLocalMonthPrefix(now);
+  const oneWeekAgo = getLocalDateString(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
 
   const filteredItems = activityItems.filter((item) => {
     let matchesSearch = false;

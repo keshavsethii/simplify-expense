@@ -8,6 +8,7 @@ import {
   DefaultGroupSplit,
   CustomCategory,
   ExpenseTemplate,
+  SimplifiedDebt,
 } from './types';
 
 const STORAGE_KEYS = {
@@ -252,10 +253,23 @@ export async function deleteMember(memberId: string): Promise<void> {
   const splits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);
   const settlements = await getItem<Settlement[]>(STORAGE_KEYS.SETTLEMENTS, []);
 
+  const removedExpIds = new Set(
+    expenses
+      .filter((e) => {
+        if (e.paid_by_member_id === memberId) return true;
+        const paidMap = getExpensePaidMap(e);
+        return (paidMap[memberId] || 0) > 0;
+      })
+      .map((e) => e.id)
+  );
+
   await setItem(STORAGE_KEYS.MEMBERS, members.filter((m) => m.id !== memberId));
   await setItem(STORAGE_KEYS.GROUP_MEMBERS, groupMembers.filter((gm) => gm.member_id !== memberId));
-  await setItem(STORAGE_KEYS.EXPENSES, expenses.filter((e) => e.paid_by_member_id !== memberId));
-  await setItem(STORAGE_KEYS.EXPENSE_SPLITS, splits.filter((s) => s.member_id !== memberId));
+  await setItem(STORAGE_KEYS.EXPENSES, expenses.filter((e) => !removedExpIds.has(e.id)));
+  await setItem(
+    STORAGE_KEYS.EXPENSE_SPLITS,
+    splits.filter((s) => s.member_id !== memberId && !removedExpIds.has(s.expense_id))
+  );
   await setItem(STORAGE_KEYS.SETTLEMENTS, settlements.filter((s) => s.from_member_id !== memberId && s.to_member_id !== memberId));
 }
 
@@ -452,7 +466,7 @@ export async function addExpense(params: AddExpenseParams): Promise<string> {
     amount: params.amount,
     currency: params.currency,
     date: params.date,
-    category: params.category || 'General',
+    category: params.category || '',
     paid_by_member_id: params.paidByMemberId,
     split_type: params.splitType,
     payers_json: params.payersJson,
@@ -512,7 +526,7 @@ export async function updateExpense(params: UpdateExpenseParams): Promise<void> 
     amount: params.amount,
     currency: params.currency,
     date: params.date,
-    category: params.category || 'General',
+    category: params.category || '',
     paid_by_member_id: params.paidByMemberId,
     split_type: params.splitType,
     payers_json: params.payersJson,
@@ -751,6 +765,51 @@ export async function getGroupBalances(groupId: string): Promise<MemberBalanceIn
   }));
 }
 
+export async function getDirectGroupDebts(
+  groupId: string,
+  members: Member[],
+  currency: string
+): Promise<SimplifiedDebt[]> {
+  const expenses = await getExpenses(groupId);
+  const allSplits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);
+  const allSettlements = await getItem<Settlement[]>(STORAGE_KEYS.SETTLEMENTS, []);
+  const splitsByExpense: Record<string, ExpenseSplit[]> = {};
+  for (const sp of allSplits) {
+    if (!splitsByExpense[sp.expense_id]) splitsByExpense[sp.expense_id] = [];
+    splitsByExpense[sp.expense_id].push(sp);
+  }
+  const settlements = allSettlements.filter((s) => s.group_id === groupId);
+
+  const debts: SimplifiedDebt[] = [];
+  for (let i = 0; i < members.length; i++) {
+    for (let j = i + 1; j < members.length; j++) {
+      const mA = members[i];
+      const mB = members[j];
+      let netBOwesA = 0;
+
+      for (const exp of expenses) {
+        const deltas = getExpensePairwiseUserDeltas(exp, splitsByExpense[exp.id] || [], mA.id);
+        netBOwesA += deltas[mB.id] || 0;
+      }
+      for (const s of settlements) {
+        if (s.from_member_id === mB.id && s.to_member_id === mA.id) {
+          netBOwesA -= s.amount;
+        } else if (s.from_member_id === mA.id && s.to_member_id === mB.id) {
+          netBOwesA += s.amount;
+        }
+      }
+
+      const rounded = Math.round(netBOwesA * 100) / 100;
+      if (rounded > 0.01) {
+        debts.push({ fromMember: mB, toMember: mA, amount: rounded, currency });
+      } else if (rounded < -0.01) {
+        debts.push({ fromMember: mA, toMember: mB, amount: Math.abs(rounded), currency });
+      }
+    }
+  }
+  return debts;
+}
+
 export async function getFriendLedger(friendId: string): Promise<{
   friend: Member;
   netBalance: number; // positive = friend owes you, negative = you owe friend
@@ -841,8 +900,16 @@ export async function getFriendLedger(friendId: string): Promise<{
   return {
     friend,
     netBalance: Math.round(balanceWithFriend * 100) / 100,
-    expenses: mutualExpenses.sort((a, b) => b.expense.date.localeCompare(a.expense.date)),
-    settlements: mutualSettlements.sort((a, b) => b.date.localeCompare(a.date)),
+    expenses: mutualExpenses.sort(
+      (a, b) =>
+        b.expense.date.localeCompare(a.expense.date) ||
+        (b.expense.created_at || '').localeCompare(a.expense.created_at || '')
+    ),
+    settlements: mutualSettlements.sort(
+      (a, b) =>
+        b.date.localeCompare(a.date) ||
+        (b.created_at || '').localeCompare(a.created_at || '')
+    ),
   };
 }
 

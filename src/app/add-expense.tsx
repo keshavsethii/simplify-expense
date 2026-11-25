@@ -74,11 +74,9 @@ export default function AddExpenseScreen() {
   const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({});
 
   const toggleSelectAll = () => {
-    if (selectedMemberIds.length === members.length) {
-      setSelectedMemberIds([]);
-    } else {
-      setSelectedMemberIds(members.map((m) => m.id));
-    }
+    setSelectedMemberIds((prev) =>
+      prev.length === members.length ? [] : members.map((m) => m.id)
+    );
   };
 
   const parsedTotalAmount = parseFloat(amount) || 0;
@@ -213,7 +211,7 @@ export default function AddExpenseScreen() {
 
   const splitStatus = calculateSplitStatus();
 
-  const loadMembersForGroup = useCallback(async (grpId: string | null) => {
+  const loadMembersForGroup = useCallback(async (grpId: string | null, userObj?: Member | null) => {
     let grpMems: Member[] = [];
     if (grpId) {
       grpMems = await getGroupMembers(grpId);
@@ -224,7 +222,7 @@ export default function AddExpenseScreen() {
     setSelectedMemberIds([]);
 
     // Ensure payerId is a valid member of this group
-    const u = currentUser || (await getCurrentUser());
+    const u = userObj ?? (await getCurrentUser());
     if (u && grpMems.some((m) => m.id === u.id)) {
       setPayerId(u.id);
     } else if (grpMems.length > 0) {
@@ -245,19 +243,24 @@ export default function AddExpenseScreen() {
         try {
           const parsed = JSON.parse(def.splits_json);
           setCustomValues(parsed);
+          return;
         } catch (e) {
           console.error(e);
         }
       }
     }
-  }, [currentUser]);
+    setSplitType('EQUAL');
+    setCustomValues({});
+  }, []);
 
   useEffect(() => {
+    let cancelled = false;
     async function init() {
       const allGrps = await getAllGroups();
       const u = await getCurrentUser();
       const allCats = await getAllCategories();
       const allTmpls = await getAllTemplates();
+      if (cancelled) return;
 
       setGroups(allGrps);
       setCurrentUser(u);
@@ -273,7 +276,7 @@ export default function AddExpenseScreen() {
       if (params.expenseId) {
         const allExpenses = await getExpenses();
         const existing = allExpenses.find((e) => e.id === params.expenseId);
-        if (existing) {
+        if (existing && !cancelled) {
           setDescription(existing.description);
           setAmount(String(existing.amount));
           setDate(existing.date);
@@ -288,6 +291,7 @@ export default function AddExpenseScreen() {
           } else {
             expMems = await getAllMembers();
           }
+          if (cancelled) return;
           setMembers(expMems);
 
           if (existing.payers_json) {
@@ -305,6 +309,7 @@ export default function AddExpenseScreen() {
           }
 
           const splits = await getExpenseSplits(existing.id);
+          if (cancelled) return;
           setSelectedMemberIds(splits.map((s) => s.member_id));
 
           const vals: Record<string, string> = {};
@@ -321,21 +326,22 @@ export default function AddExpenseScreen() {
       // If groupId provided, filter to group members
       if (params.groupId) {
         setSelectedGroupId(params.groupId);
-        await loadMembersForGroup(params.groupId);
+        await loadMembersForGroup(params.groupId, u);
       } else {
         setSelectedGroupId(null);
-        await loadMembersForGroup(null);
+        await loadMembersForGroup(null, u);
       }
     }
     init();
+    return () => {
+      cancelled = true;
+    };
   }, [params.groupId, params.expenseId, loadMembersForGroup]);
 
   const toggleMemberSelection = (mId: string) => {
-    if (selectedMemberIds.includes(mId)) {
-      setSelectedMemberIds(selectedMemberIds.filter((id) => id !== mId));
-    } else {
-      setSelectedMemberIds([...selectedMemberIds, mId]);
-    }
+    setSelectedMemberIds((prev) =>
+      prev.includes(mId) ? prev.filter((id) => id !== mId) : [...prev, mId]
+    );
   };
 
   const handleSaveExpense = async () => {
@@ -580,7 +586,7 @@ export default function AddExpenseScreen() {
                 <Text
                   style={[
                     styles.splitTypeBtnText,
-                    splitType === t && styles.splitTypeBtnActive,
+                    splitType === t && styles.splitTypeBtnTextActive,
                   ]}
                 >
                   {t === 'EQUAL' ? '=' : t === 'EXACT' ? '1.23' : t === 'PERCENT' ? '%' : 'Shares'}
@@ -1156,7 +1162,7 @@ export default function AddExpenseScreen() {
                 style={styles.modalMemberRow}
                 onPress={() => {
                   setSelectedGroupId(null);
-                  loadMembersForGroup(null);
+                  loadMembersForGroup(null, currentUser);
                   setShowGroupModal(false);
                 }}
               >
@@ -1183,7 +1189,7 @@ export default function AddExpenseScreen() {
                   style={styles.modalMemberRow}
                   onPress={() => {
                     setSelectedGroupId(g.id);
-                    loadMembersForGroup(g.id);
+                    loadMembersForGroup(g.id, currentUser);
                     setShowGroupModal(false);
                   }}
                 >

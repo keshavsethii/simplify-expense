@@ -110,19 +110,24 @@ export default function SettleUpScreen() {
 
   useEffect(() => {
     if (!fromMemberId || !toMemberId || fromMemberId === toMemberId) return;
+    let cancelled = false;
     async function updateMutual() {
       const mutual = await getSharedGroups(fromMemberId, toMemberId);
+      if (cancelled) return;
       setSharedGroups(mutual);
       if (!params.groupId) {
-        if (mutual.length === 1) {
-          setSelectedGroupId(mutual[0].id);
-        } else if (!mutual.some((g) => g.id === selectedGroupId)) {
-          setSelectedGroupId(null);
-        }
+        setSelectedGroupId((prev) => {
+          if (mutual.length === 1) return mutual[0].id;
+          if (prev && !mutual.some((g) => g.id === prev)) return null;
+          return prev;
+        });
       }
     }
     updateMutual();
-  }, [fromMemberId, toMemberId, params.groupId, selectedGroupId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [fromMemberId, toMemberId, params.groupId]);
 
   const handleSwap = () => {
     const prevFrom = fromMemberId;

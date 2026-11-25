@@ -21,7 +21,7 @@ import {
   addCustomCategory,
   deleteCustomCategory,
 } from '../../db/queries';
-import { exportDatabaseBackup, importDatabaseBackup } from '../../db/storage';
+import { exportDatabaseBackup, importDatabaseBackup, clearAllAppData } from '../../db/storage';
 import { Member, CustomCategory } from '../../db/types';
 
 export default function AccountScreen() {
@@ -197,6 +197,35 @@ export default function AccountScreen() {
     }
   };
 
+  const handleClearAllData = () => {
+    Alert.alert(
+      'Clear All Data',
+      'Remove all expenses, settlements, groups, categories, and templates?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Keep Friends Only',
+          onPress: async () => {
+            await clearAllAppData(true);
+            await loadUser();
+            await loadCategories();
+            Alert.alert('Cleared', 'All groups, expenses, settlements, and settings have been cleared. Your friends list was kept.');
+          },
+        },
+        {
+          text: 'Reset Everything',
+          style: 'destructive',
+          onPress: async () => {
+            await clearAllAppData(false);
+            await loadUser();
+            await loadCategories();
+            Alert.alert('App Reset', 'All test data has been completely cleared.');
+          },
+        },
+      ]
+    );
+  };
+
   const handleRestoreBackup = async () => {
     if (!restoreJsonInput.trim()) {
       Alert.alert('Empty Input', 'Please paste your backup JSON first.');
@@ -361,6 +390,20 @@ export default function AccountScreen() {
             </View>
           </View>
           <Ionicons name="information-circle-outline" size={18} color="#9CA3AF" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.rowClickable}
+          onPress={handleClearAllData}
+        >
+          <View style={styles.rowLeft}>
+            <Ionicons name="trash-outline" size={22} color="#EF4444" />
+            <View>
+              <Text style={[styles.rowText, { color: '#EF4444' }]}>Clear All Data</Text>
+              <Text style={styles.rowSubtext}>Reset expenses, settlements, groups, and test data</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
         </TouchableOpacity>
       </View>
 

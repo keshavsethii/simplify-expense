@@ -107,6 +107,34 @@ export async function importDatabaseBackup(jsonString: string): Promise<boolean>
   }
 }
 
+export async function clearAllAppData(keepFriends: boolean = false): Promise<void> {
+  const members = await getItem<Member[]>(STORAGE_KEYS.MEMBERS, []);
+  const currentUser = members.find((m) => m.is_user === 1) || {
+    id: 'user_self',
+    name: 'You',
+    email: 'me@personal.app',
+    is_user: 1 as const,
+    avatar_color: '#1cc29f',
+  };
+
+  const nextMembers = keepFriends
+    ? members.length > 0
+      ? members
+      : [currentUser]
+    : [currentUser];
+
+  await setItem(STORAGE_KEYS.MEMBERS, nextMembers);
+  await setItem(STORAGE_KEYS.GROUPS, []);
+  await setItem(STORAGE_KEYS.GROUP_MEMBERS, []);
+  await setItem(STORAGE_KEYS.EXPENSES, []);
+  await setItem(STORAGE_KEYS.EXPENSE_SPLITS, []);
+  await setItem(STORAGE_KEYS.SETTLEMENTS, []);
+  await setItem(STORAGE_KEYS.DEFAULT_SPLITS, []);
+  await setItem(STORAGE_KEYS.CUSTOM_CATEGORIES, []);
+  await setItem(STORAGE_KEYS.EXPENSE_TEMPLATES, []);
+  await AsyncStorage.setItem(STORAGE_KEYS.INITIALIZED, 'true');
+}
+
 export async function initStorage(): Promise<void> {
   const isInit = await AsyncStorage.getItem(STORAGE_KEYS.INITIALIZED);
   if (isInit) return;
@@ -678,32 +706,12 @@ export async function getGroupBalances(groupId: string): Promise<MemberBalanceIn
   const expenses = await getExpenses(groupId);
   const allSplits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);
   const allSettlements = await getItem<Settlement[]>(STORAGE_KEYS.SETTLEMENTS, []);
-  const groupMembers = await getItem<{ group_id: string; member_id: string }[]>(
-    STORAGE_KEYS.GROUP_MEMBERS,
-    []
-  );
 
   const expenseIdSet = new Set(expenses.map((e) => e.id));
   const splits = allSplits.filter((s) => expenseIdSet.has(s.expense_id));
 
-  // Determine how many active mutual groups two members share
-  const getMutualGroupCount = (mId1: string, mId2: string) => {
-    const g1 = new Set(groupMembers.filter((gm) => gm.member_id === mId1).map((gm) => gm.group_id));
-    return groupMembers.filter((gm) => gm.member_id === mId2 && g1.has(gm.group_id)).length;
-  };
-
-  const memberIdSet = new Set(members.map((m) => m.id));
-
-  // A settlement applies to this group if:
-  // 1) Explicitly recorded for this group (s.group_id === groupId)
-  // 2) OR direct settlement between members of this group where this is their only shared group
-  const settlements = allSettlements.filter((s) => {
-    if (s.group_id === groupId) return true;
-    if (!s.group_id && memberIdSet.has(s.from_member_id) && memberIdSet.has(s.to_member_id)) {
-      return getMutualGroupCount(s.from_member_id, s.to_member_id) === 1;
-    }
-    return false;
-  });
+  // Only settlements recorded specifically for this group apply to this group's balance
+  const settlements = allSettlements.filter((s) => s.group_id === groupId);
 
   const balanceMap: Record<string, number> = {};
   for (const m of members) {

@@ -169,6 +169,66 @@ export default function SettleUpScreen() {
   const payer = members.find((m) => m.id === fromMemberId);
   const recipient = members.find((m) => m.id === toMemberId);
 
+  const renderMemberSelectModal = ({
+    visible,
+    title,
+    subtitle,
+    selectedId,
+    excludedId,
+    defaultColor,
+    onSelect,
+    onClose,
+  }: {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    selectedId: string;
+    excludedId: string;
+    defaultColor: string;
+    onSelect: (memberId: string) => void;
+    onClose: () => void;
+  }) => {
+    const options = members.filter((m) => m.id !== excludedId);
+    return (
+      <Modal visible={visible} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>{title}</Text>
+              <TouchableOpacity onPress={onClose}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSubtitle}>{subtitle}</Text>
+
+            <ScrollView style={{ maxHeight: 350 }}>
+              {options.map((m) => (
+                <TouchableOpacity
+                  key={m.id}
+                  style={styles.modalMemberRow}
+                  onPress={() => {
+                    onSelect(m.id);
+                    onClose();
+                  }}
+                >
+                  <View style={styles.modalMemberLeft}>
+                    <View style={[styles.avatarDot, { backgroundColor: m.avatar_color || defaultColor }]}>
+                      <Text style={styles.avatarDotText}>{m.name.charAt(0).toUpperCase()}</Text>
+                    </View>
+                    <Text style={styles.modalMemberName}>{m.is_user === 1 ? 'You' : m.name}</Text>
+                  </View>
+                  {selectedId === m.id && (
+                    <Ionicons name="checkmark-circle" size={22} color="#1cc29f" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.card}>
@@ -334,80 +394,28 @@ export default function SettleUpScreen() {
       </View>
 
       {/* Payer Selection Dropdown Modal */}
-      <Modal visible={showPayerModal} animationType="fade" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCardLarge}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Select Who Paid</Text>
-              <TouchableOpacity onPress={() => setShowPayerModal(false)}>
-                <Ionicons name="close" size={24} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSubtitle}>Choose the person who made the payment.</Text>
-
-            <ScrollView style={{ maxHeight: 350 }}>
-              {members.map((m) => (
-                <TouchableOpacity
-                  key={m.id}
-                  style={styles.modalMemberRow}
-                  onPress={() => {
-                    setFromMemberId(m.id);
-                    setShowPayerModal(false);
-                  }}
-                >
-                  <View style={styles.modalMemberLeft}>
-                    <View style={[styles.avatarDot, { backgroundColor: m.avatar_color || '#1cc29f' }]}>
-                      <Text style={styles.avatarDotText}>{m.name.charAt(0).toUpperCase()}</Text>
-                    </View>
-                    <Text style={styles.modalMemberName}>{m.is_user === 1 ? 'You' : m.name}</Text>
-                  </View>
-                  {fromMemberId === m.id && (
-                    <Ionicons name="checkmark-circle" size={22} color="#1cc29f" />
-                  )}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      {renderMemberSelectModal({
+        visible: showPayerModal,
+        title: 'Select Who Paid',
+        subtitle: 'Choose who made the payment (use Swap above to flip payer & recipient).',
+        selectedId: fromMemberId,
+        excludedId: toMemberId,
+        defaultColor: '#1cc29f',
+        onSelect: setFromMemberId,
+        onClose: () => setShowPayerModal(false),
+      })}
 
       {/* Recipient Selection Dropdown Modal */}
-      <Modal visible={showRecipientModal} animationType="fade" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCardLarge}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Select Who Received</Text>
-              <TouchableOpacity onPress={() => setShowRecipientModal(false)}>
-                <Ionicons name="close" size={24} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSubtitle}>Choose the person who received the money.</Text>
-
-            <ScrollView style={{ maxHeight: 350 }}>
-              {members.map((m) => (
-                <TouchableOpacity
-                  key={m.id}
-                  style={styles.modalMemberRow}
-                  onPress={() => {
-                    setToMemberId(m.id);
-                    setShowRecipientModal(false);
-                  }}
-                >
-                  <View style={styles.modalMemberLeft}>
-                    <View style={[styles.avatarDot, { backgroundColor: m.avatar_color || '#3B82F6' }]}>
-                      <Text style={styles.avatarDotText}>{m.name.charAt(0).toUpperCase()}</Text>
-                    </View>
-                    <Text style={styles.modalMemberName}>{m.is_user === 1 ? 'You' : m.name}</Text>
-                  </View>
-                  {toMemberId === m.id && (
-                    <Ionicons name="checkmark-circle" size={22} color="#1cc29f" />
-                  )}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      {renderMemberSelectModal({
+        visible: showRecipientModal,
+        title: 'Select Who Received',
+        subtitle: 'Choose who received the money (use Swap above to flip payer & recipient).',
+        selectedId: toMemberId,
+        excludedId: fromMemberId,
+        defaultColor: '#3B82F6',
+        onSelect: setToMemberId,
+        onClose: () => setShowRecipientModal(false),
+      })}
     </ScrollView>
   );
 }

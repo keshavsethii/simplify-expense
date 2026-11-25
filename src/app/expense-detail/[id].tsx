@@ -15,6 +15,7 @@ import {
   getAllMembers,
   getAllGroups,
   deleteExpense,
+  getExpensePaidMap,
 } from '../../db/queries';
 import { Expense, ExpenseSplit, Member, Group } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
@@ -75,6 +76,9 @@ export default function ExpenseDetailScreen() {
     );
   }
 
+  const paidMap = getExpensePaidMap(expense);
+  const payerEntries = Object.entries(paidMap).filter(([, amt]) => amt > 0);
+  const isMultiPayer = payerEntries.length > 1;
   const payer = members.get(expense.paid_by_member_id);
 
   return (
@@ -116,17 +120,39 @@ export default function ExpenseDetailScreen() {
 
         <View style={styles.divider} />
 
-        {/* Payer Row */}
-        <View style={styles.payerBox}>
-          <View style={[styles.avatar, { backgroundColor: payer?.avatar_color || '#1cc29f' }]}>
-            <Text style={styles.avatarText}>{payer?.name.charAt(0) || '?'}</Text>
+        {/* Payer Row(s) */}
+        {isMultiPayer ? (
+          <View style={{ gap: 12 }}>
+            {payerEntries.map(([mId, amt]) => {
+              const pMember = members.get(mId);
+              return (
+                <View key={mId} style={styles.payerBox}>
+                  <View style={[styles.avatar, { backgroundColor: pMember?.avatar_color || '#1cc29f' }]}>
+                    <Text style={styles.avatarText}>{pMember?.name.charAt(0) || '?'}</Text>
+                  </View>
+                  <View style={styles.payerTextContainer}>
+                    <Text style={styles.payerName}>
+                      {pMember?.is_user === 1 ? 'You' : pMember?.name || 'Unknown'}
+                    </Text>
+                    <Text style={styles.payerSub}>paid</Text>
+                  </View>
+                  <Text style={styles.payerAmount}>{formatMoney(amt, expense.currency)}</Text>
+                </View>
+              );
+            })}
           </View>
-          <View style={styles.payerTextContainer}>
-            <Text style={styles.payerName}>{payer?.is_user === 1 ? 'You' : payer?.name}</Text>
-            <Text style={styles.payerSub}>paid the total bill</Text>
+        ) : (
+          <View style={styles.payerBox}>
+            <View style={[styles.avatar, { backgroundColor: payer?.avatar_color || '#1cc29f' }]}>
+              <Text style={styles.avatarText}>{payer?.name.charAt(0) || '?'}</Text>
+            </View>
+            <View style={styles.payerTextContainer}>
+              <Text style={styles.payerName}>{payer?.is_user === 1 ? 'You' : payer?.name}</Text>
+              <Text style={styles.payerSub}>paid the total bill</Text>
+            </View>
+            <Text style={styles.payerAmount}>{formatMoney(expense.amount, expense.currency)}</Text>
           </View>
-          <Text style={styles.payerAmount}>{formatMoney(expense.amount, expense.currency)}</Text>
-        </View>
+        )}
 
         <View style={styles.divider} />
 

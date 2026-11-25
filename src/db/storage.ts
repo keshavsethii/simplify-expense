@@ -523,6 +523,83 @@ export async function deleteExpense(expenseId: string): Promise<void> {
   );
 }
 
+export function getExpensePaidMap(exp: Expense): Record<string, number> {
+  const paidMap: Record<string, number> = {};
+  if (exp.payers_json) {
+    try {
+      const payers: { member_id: string; amount: number }[] = JSON.parse(exp.payers_json);
+      if (Array.isArray(payers) && payers.length > 0) {
+        for (const p of payers) {
+          if (p.amount > 0) {
+            paidMap[p.member_id] = (paidMap[p.member_id] || 0) + p.amount;
+          }
+        }
+        if (Object.keys(paidMap).length > 0) return paidMap;
+      }
+    } catch {
+      // Fallback to single payer below
+    }
+  }
+  if (exp.paid_by_member_id) {
+    paidMap[exp.paid_by_member_id] = exp.amount;
+  }
+  return paidMap;
+}
+
+/**
+ * Computes net-first pairwise balances between `userId` and each other member
+ * for a single expense: every participant's payment offsets their own split first
+ * (net = paid - split), then net deficits settle directly against net surpluses.
+ * Positive value = friend owes `userId`; negative = `userId` owes friend.
+ */
+export function getExpensePairwiseUserDeltas(
+  exp: Expense,
+  expSplits: ExpenseSplit[],
+  userId: string
+): Record<string, number> {
+  const paidMap = getExpensePaidMap(exp);
+  const splitMap: Record<string, number> = {};
+  for (const sp of expSplits) {
+    splitMap[sp.member_id] = (splitMap[sp.member_id] || 0) + sp.amount;
+  }
+
+  const allIds = new Set([...Object.keys(paidMap), ...Object.keys(splitMap)]);
+  const netMap: Record<string, number> = {};
+  let totalSurplus = 0;
+
+  for (const mId of allIds) {
+    const net = (paidMap[mId] || 0) - (splitMap[mId] || 0);
+    netMap[mId] = net;
+    if (net > 0.001) {
+      totalSurplus += net;
+    }
+  }
+
+  const userNet = netMap[userId] || 0;
+  const deltas: Record<string, number> = {};
+  if (Math.abs(userNet) <= 0.001 || totalSurplus <= 0.001) {
+    return deltas;
+  }
+
+  if (userNet > 0.001) {
+    const userShareOfSurplus = userNet / totalSurplus;
+    for (const [mId, mNet] of Object.entries(netMap)) {
+      if (mId !== userId && mNet < -0.001) {
+        deltas[mId] = -mNet * userShareOfSurplus;
+      }
+    }
+  } else {
+    const userDeficit = -userNet;
+    for (const [mId, mNet] of Object.entries(netMap)) {
+      if (mId !== userId && mNet > 0.001) {
+        deltas[mId] = -userDeficit * (mNet / totalSurplus);
+      }
+    }
+  }
+
+  return deltas;
+}
+
 export async function getExpenses(groupId?: string, memberId?: string): Promise<Expense[]> {
   const expenses = await getItem<Expense[]>(STORAGE_KEYS.EXPENSES, []);
   const allSplits = await getItem<ExpenseSplit[]>(STORAGE_KEYS.EXPENSE_SPLITS, []);
@@ -536,9 +613,11 @@ export async function getExpenses(groupId?: string, memberId?: string): Promise<
     const expenseIdsWithMember = new Set(
       allSplits.filter((s) => s.member_id === memberId).map((s) => s.expense_id)
     );
-    filtered = filtered.filter(
-      (e) => e.paid_by_member_id === memberId || expenseIdsWithMember.has(e.id)
-    );
+    filtered = filtered.filter((e) => {
+      if (expenseIdsWithMember.has(e.id)) return true;
+      const paidMap = getExpensePaidMap(e);
+      return (paidMap[memberId] || 0) > 0;
+    });
   }
 
   return filtered.sort((a, b) => b.date.localeCompare(a.date) || b.created_at.localeCompare(a.created_at));
@@ -633,21 +712,11 @@ export async function getGroupBalances(groupId: string): Promise<MemberBalanceIn
 
   // 1. Credit payer(s) of each expense
   for (const exp of expenses) {
-    if (exp.payers_json) {
-      try {
-        const payers: { member_id: string; amount: number }[] = JSON.parse(exp.payers_json);
-        for (const p of payers) {
-          if (balanceMap[p.member_id] !== undefined) {
-            balanceMap[p.member_id] += p.amount;
-          }
-        }
-      } catch {
-        if (balanceMap[exp.paid_by_member_id] !== undefined) {
-          balanceMap[exp.paid_by_member_id] += exp.amount;
-        }
+    const paidMap = getExpensePaidMap(exp);
+    for (const [mId, amt] of Object.entries(paidMap)) {
+      if (balanceMap[mId] !== undefined) {
+        balanceMap[mId] += amt;
       }
-    } else if (balanceMap[exp.paid_by_member_id] !== undefined) {
-      balanceMap[exp.paid_by_member_id] += exp.amount;
     }
   }
 
@@ -677,7 +746,15 @@ export async function getGroupBalances(groupId: string): Promise<MemberBalanceIn
 export async function getFriendLedger(friendId: string): Promise<{
   friend: Member;
   netBalance: number; // positive = friend owes you, negative = you owe friend
-  expenses: { expense: Expense; yourShare: number; friendShare: number; paidByFriend: boolean; paidByYou: boolean }[];
+  expenses: {
+    expense: Expense;
+    yourShare: number;
+    friendShare: number;
+    paidByFriend: boolean;
+    paidByYou: boolean;
+    deltaWithFriend: number;
+    isMultiPayer: boolean;
+  }[];
   settlements: Settlement[];
 }> {
   const allMembers = await getAllMembers();
@@ -701,36 +778,39 @@ export async function getFriendLedger(friendId: string): Promise<{
     friendShare: number;
     paidByFriend: boolean;
     paidByYou: boolean;
+    deltaWithFriend: number;
+    isMultiPayer: boolean;
   }[] = [];
 
   let balanceWithFriend = 0;
 
   for (const exp of allExpenses) {
     const splits = splitsByExpense[exp.id] || [];
+    const paidMap = getExpensePaidMap(exp);
+    const yourPaid = paidMap[currentUser.id] || 0;
+    const friendPaid = paidMap[friendId] || 0;
     const yourSplit = splits.find((s) => s.member_id === currentUser.id);
     const friendSplit = splits.find((s) => s.member_id === friendId);
 
-    const involvesBoth =
-      (exp.paid_by_member_id === currentUser.id && friendSplit) ||
-      (exp.paid_by_member_id === friendId && yourSplit) ||
-      (yourSplit && friendSplit);
+    const userInvolved = yourPaid > 0 || !!yourSplit;
+    const friendInvolved = friendPaid > 0 || !!friendSplit;
 
-    if (involvesBoth) {
-      const paidByYou = exp.paid_by_member_id === currentUser.id;
-      const paidByFriend = exp.paid_by_member_id === friendId;
+    if (userInvolved && friendInvolved) {
+      const payerCount = Object.keys(paidMap).length;
+      const isMultiPayer = payerCount > 1;
+      const deltas = getExpensePairwiseUserDeltas(exp, splits, currentUser.id);
+      const deltaWithFriend = deltas[friendId] || 0;
 
-      if (paidByYou && friendSplit) {
-        balanceWithFriend += friendSplit.amount;
-      } else if (paidByFriend && yourSplit) {
-        balanceWithFriend -= yourSplit.amount;
-      }
+      balanceWithFriend += deltaWithFriend;
 
       mutualExpenses.push({
         expense: exp,
         yourShare: yourSplit ? yourSplit.amount : 0,
         friendShare: friendSplit ? friendSplit.amount : 0,
-        paidByFriend,
-        paidByYou,
+        paidByFriend: !isMultiPayer && friendPaid > 0,
+        paidByYou: !isMultiPayer && yourPaid > 0,
+        deltaWithFriend: Math.round(deltaWithFriend * 100) / 100,
+        isMultiPayer,
       });
     }
   }
@@ -785,50 +865,10 @@ export async function getOverallUserBalance(): Promise<{
 
   for (const exp of expenses) {
     const expSplits = splitsByExpense[exp.id] || [];
-    if (exp.payers_json) {
-      try {
-        const payers: { member_id: string; amount: number }[] = JSON.parse(exp.payers_json);
-        const myPaid = payers.find((p) => p.member_id === currentUser.id)?.amount || 0;
-        const mySplit = expSplits.find((s) => s.member_id === currentUser.id)?.amount || 0;
-
-        for (const p of payers) {
-          if (p.member_id !== currentUser.id && balanceMap[p.member_id] !== undefined && exp.amount > 0) {
-            const payerProportion = p.amount / exp.amount;
-            balanceMap[p.member_id] -= mySplit * payerProportion;
-          }
-        }
-        for (const sp of expSplits) {
-          if (sp.member_id !== currentUser.id && balanceMap[sp.member_id] !== undefined && exp.amount > 0) {
-            const myProportion = myPaid / exp.amount;
-            balanceMap[sp.member_id] += sp.amount * myProportion;
-          }
-        }
-      } catch {
-        if (exp.paid_by_member_id === currentUser.id) {
-          for (const sp of expSplits) {
-            if (sp.member_id !== currentUser.id && balanceMap[sp.member_id] !== undefined) {
-              balanceMap[sp.member_id] += sp.amount;
-            }
-          }
-        } else {
-          const payerId = exp.paid_by_member_id;
-          const yourSplit = expSplits.find((s) => s.member_id === currentUser.id);
-          if (yourSplit && balanceMap[payerId] !== undefined) {
-            balanceMap[payerId] -= yourSplit.amount;
-          }
-        }
-      }
-    } else if (exp.paid_by_member_id === currentUser.id) {
-      for (const sp of expSplits) {
-        if (sp.member_id !== currentUser.id && balanceMap[sp.member_id] !== undefined) {
-          balanceMap[sp.member_id] += sp.amount;
-        }
-      }
-    } else {
-      const payerId = exp.paid_by_member_id;
-      const yourSplit = expSplits.find((s) => s.member_id === currentUser.id);
-      if (yourSplit && balanceMap[payerId] !== undefined) {
-        balanceMap[payerId] -= yourSplit.amount;
+    const deltas = getExpensePairwiseUserDeltas(exp, expSplits, currentUser.id);
+    for (const [mId, delta] of Object.entries(deltas)) {
+      if (balanceMap[mId] !== undefined) {
+        balanceMap[mId] += delta;
       }
     }
   }

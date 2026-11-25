@@ -28,6 +28,7 @@ import {
   deleteGroup,
   getAllMembers,
   addMemberToGroup,
+  getExpensePaidMap,
 } from '../../db/queries';
 import { Group, Member, Expense, SimplifiedDebt } from '../../db/types';
 import { simplifyDebts } from '../../utils/simplifyDebts';
@@ -498,7 +499,20 @@ export default function GroupDetailScreen() {
             }
             contentContainerStyle={styles.listPadding}
             renderItem={({ item }) => {
-              const payer = members.find((m) => m.id === item.paid_by_member_id);
+              const paidMap = getExpensePaidMap(item);
+              const payerEntries = Object.entries(paidMap).filter(([, amt]) => amt > 0);
+              const payerLabel =
+                payerEntries.length > 1
+                  ? payerEntries
+                      .map(([mId]) => {
+                        const m = members.find((mem) => mem.id === mId);
+                        return m?.is_user === 1 ? 'You' : m?.name || 'Unknown';
+                      })
+                      .join(' & ')
+                  : (() => {
+                      const payer = members.find((m) => m.id === item.paid_by_member_id);
+                      return payer?.is_user === 1 ? 'You' : payer?.name || 'Unknown';
+                    })();
               return (
                 <TouchableOpacity
                   style={styles.expenseCard}
@@ -517,8 +531,7 @@ export default function GroupDetailScreen() {
                   <View style={styles.expenseInfo}>
                     <Text style={styles.expenseDesc}>{item.description}</Text>
                     <Text style={styles.expensePayer}>
-                      {payer?.is_user === 1 ? 'You' : payer?.name} paid{' '}
-                      {formatMoney(item.amount, item.currency)}
+                      {payerLabel} paid {formatMoney(item.amount, item.currency)}
                     </Text>
                   </View>
 

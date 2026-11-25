@@ -18,6 +18,7 @@ import {
   getExpenseSplits,
   getSettlements,
   deleteSettlement,
+  getExpensePaidMap,
 } from '../../db/queries';
 import { Expense, Settlement } from '../../db/types';
 import { formatMoney } from '../../utils/currency';
@@ -67,23 +68,42 @@ export default function ActivityScreen() {
 
       for (const exp of allExpenses) {
         const splits = await getExpenseSplits(exp.id);
-        const payer = memberMap.get(exp.paid_by_member_id);
+        const paidMap = getExpensePaidMap(exp);
+        const payerEntries = Object.entries(paidMap).filter(([, amt]) => amt > 0);
         const group = exp.group_id ? groupMap.get(exp.group_id) : undefined;
+
+        let payerName = 'Unknown';
+        if (payerEntries.length > 1) {
+          payerName = payerEntries
+            .map(([mId]) => {
+              const m = memberMap.get(mId);
+              return m?.is_user === 1 ? 'You' : m?.name || 'Unknown';
+            })
+            .join(' & ');
+        } else {
+          const payer = memberMap.get(exp.paid_by_member_id);
+          payerName = payer?.is_user === 1 ? 'You' : payer?.name || 'Unknown';
+        }
 
         let userInvolvement = 'not involved';
         let userAmount = 0;
 
         const userSplit = currentUser ? splits.find((s) => s.member_id === currentUser.id) : undefined;
+        const userPaid = currentUser ? paidMap[currentUser.id] || 0 : 0;
+        const userShare = userSplit ? userSplit.amount : 0;
 
-        if (currentUser && exp.paid_by_member_id === currentUser.id) {
-          const otherSplitsTotal = splits
-            .filter((s) => s.member_id !== currentUser.id)
-            .reduce((sum, s) => sum + s.amount, 0);
-          userInvolvement = `you lent`;
-          userAmount = otherSplitsTotal;
-        } else if (userSplit) {
-          userInvolvement = `you borrowed`;
-          userAmount = userSplit.amount;
+        if (currentUser && (userPaid > 0 || userSplit)) {
+          const net = Math.round((userPaid - userShare) * 100) / 100;
+          if (net > 0.01) {
+            userInvolvement = 'you lent';
+            userAmount = net;
+          } else if (net < -0.01) {
+            userInvolvement = 'you borrowed';
+            userAmount = Math.abs(net);
+          } else {
+            userInvolvement = 'settled';
+            userAmount = 0;
+          }
         }
 
         items.push({
@@ -91,7 +111,7 @@ export default function ActivityScreen() {
           id: exp.id,
           date: exp.date,
           expense: exp,
-          payerName: payer?.is_user === 1 ? 'You' : payer?.name || 'Unknown',
+          payerName,
           groupName: group?.name,
           userInvolvement,
           userAmount,

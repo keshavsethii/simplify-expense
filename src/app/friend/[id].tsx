@@ -33,6 +33,8 @@ export default function FriendDetailScreen() {
     friendShare: number;
     paidByFriend: boolean;
     paidByYou: boolean;
+    deltaWithFriend?: number;
+    isMultiPayer?: boolean;
   }[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [activeTab, setActiveTab] = useState<'expenses' | 'settlements'>('expenses');
@@ -49,7 +51,13 @@ export default function FriendDetailScreen() {
     ];
     expenses.forEach((item) => {
       const cleanDesc = `"${(item.expense.description || '').replace(/"/g, '""')}"`;
-      const payer = item.paidByYou ? 'You' : item.paidByFriend ? friend.name : 'Other';
+      const payer = item.isMultiPayer
+        ? 'Multiple Payers'
+        : item.paidByYou
+        ? 'You'
+        : item.paidByFriend
+        ? friend.name
+        : 'Other';
       rows.push([
         item.expense.date,
         'Expense',
@@ -88,10 +96,15 @@ export default function FriendDetailScreen() {
 
     if (expenses.length > 0) {
       text += `📝 Recent Shared Expenses (${expenses.length}):\n`;
-      expenses.slice(0, 10).forEach(({ expense, paidByYou }) => {
-        text += `• ${expense.date}: ${expense.description} - ${formatMoney(expense.amount)} (${
-          paidByYou ? 'You paid' : `${friend.name} paid`
-        })\n`;
+      expenses.slice(0, 10).forEach(({ expense, paidByYou, paidByFriend, isMultiPayer }) => {
+        const payerText = isMultiPayer
+          ? 'Multiple payers'
+          : paidByYou
+          ? 'You paid'
+          : paidByFriend
+          ? `${friend.name} paid`
+          : 'Shared';
+        text += `• ${expense.date}: ${expense.description} - ${formatMoney(expense.amount)} (${payerText})\n`;
       });
       if (expenses.length > 10) {
         text += `... and ${expenses.length - 10} more expenses.\n`;
@@ -360,7 +373,9 @@ export default function FriendDetailScreen() {
               <View style={styles.expenseInfo}>
                 <Text style={styles.expenseDesc}>{item.expense.description}</Text>
                 <Text style={styles.expensePayer}>
-                  {item.paidByYou
+                  {item.isMultiPayer
+                    ? `Multiple payers paid ${formatMoney(item.expense.amount)}`
+                    : item.paidByYou
                     ? 'You paid ' + formatMoney(item.expense.amount)
                     : item.paidByFriend
                     ? `${friend.name} paid ` + formatMoney(item.expense.amount)
@@ -369,22 +384,49 @@ export default function FriendDetailScreen() {
               </View>
 
               <View style={styles.splitResultBox}>
-                <Text
-                  style={[
-                    styles.splitResultText,
-                    item.paidByYou
-                      ? styles.textPositive
-                      : item.paidByFriend
-                      ? styles.textNegative
-                      : styles.textNeutral,
-                  ]}
-                >
-                  {item.paidByYou
-                    ? `you lent ${formatMoney(item.friendShare)}`
-                    : item.paidByFriend
-                    ? `you borrowed ${formatMoney(item.yourShare)}`
-                    : `your share ${formatMoney(item.yourShare)}`}
-                </Text>
+                {(() => {
+                  const delta = item.deltaWithFriend ?? 0;
+                  if (item.isMultiPayer || (!item.paidByYou && !item.paidByFriend && Math.abs(delta) > 0.01)) {
+                    const text =
+                      delta > 0.01
+                        ? `you lent ${formatMoney(delta)}`
+                        : delta < -0.01
+                        ? `you borrowed ${formatMoney(Math.abs(delta))}`
+                        : 'even (₹0.00)';
+                    return (
+                      <Text
+                        style={[
+                          styles.splitResultText,
+                          delta > 0.01
+                            ? styles.textPositive
+                            : delta < -0.01
+                            ? styles.textNegative
+                            : styles.textNeutral,
+                        ]}
+                      >
+                        {text}
+                      </Text>
+                    );
+                  }
+                  return (
+                    <Text
+                      style={[
+                        styles.splitResultText,
+                        item.paidByYou
+                          ? styles.textPositive
+                          : item.paidByFriend
+                          ? styles.textNegative
+                          : styles.textNeutral,
+                      ]}
+                    >
+                      {item.paidByYou
+                        ? `you lent ${formatMoney(item.friendShare)}`
+                        : item.paidByFriend
+                        ? `you borrowed ${formatMoney(item.yourShare)}`
+                        : `your share ${formatMoney(item.yourShare)}`}
+                    </Text>
+                  );
+                })()}
               </View>
             </TouchableOpacity>
           )}

@@ -28,6 +28,7 @@ type ActivityItem =
       type: 'EXPENSE';
       id: string;
       date: string;
+      createdAt: string;
       expense: Expense;
       payerName: string;
       groupName?: string;
@@ -38,6 +39,7 @@ type ActivityItem =
       type: 'SETTLEMENT';
       id: string;
       date: string;
+      createdAt: string;
       settlement: Settlement;
       fromName: string;
       toName: string;
@@ -110,6 +112,7 @@ export default function ActivityScreen() {
           type: 'EXPENSE',
           id: exp.id,
           date: exp.date,
+          createdAt: exp.created_at || '',
           expense: exp,
           payerName,
           groupName: group?.name,
@@ -127,6 +130,7 @@ export default function ActivityScreen() {
           type: 'SETTLEMENT',
           id: set.id,
           date: set.date,
+          createdAt: set.created_at || '',
           settlement: set,
           fromName: fromM?.is_user === 1 ? 'You' : fromM?.name || 'Unknown',
           toName: toM?.is_user === 1 ? 'You' : toM?.name || 'Unknown',
@@ -135,7 +139,9 @@ export default function ActivityScreen() {
         });
       }
 
-      items.sort((a, b) => b.date.localeCompare(a.date));
+      items.sort(
+        (a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)
+      );
       setActivityItems(items);
     } catch (e) {
       console.error(e);
@@ -159,6 +165,7 @@ export default function ActivityScreen() {
     )
   );
   const categories = uniqueCategories.length > 0 ? ['ALL', ...uniqueCategories, 'Payments'] : [];
+  const activeCategory = categories.includes(selectedCategory) ? selectedCategory : 'ALL';
 
   const now = new Date();
   const currentMonthStr = now.toISOString().substring(0, 7);
@@ -176,8 +183,8 @@ export default function ActivityScreen() {
         (item.groupName ? item.groupName.toLowerCase().includes(searchQuery.toLowerCase()) : false);
 
       matchesCategory =
-        selectedCategory === 'ALL' ||
-        item.expense.category?.toLowerCase() === selectedCategory.toLowerCase();
+        activeCategory === 'ALL' ||
+        item.expense.category?.toLowerCase() === activeCategory.toLowerCase();
 
       if (timeFilter === 'MONTH') matchesTime = item.expense.date.startsWith(currentMonthStr);
       else if (timeFilter === 'WEEK') matchesTime = item.expense.date >= oneWeekAgo;
@@ -188,7 +195,7 @@ export default function ActivityScreen() {
         item.toName.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (item.groupName ? item.groupName.toLowerCase().includes(searchQuery.toLowerCase()) : false);
 
-      matchesCategory = selectedCategory === 'ALL' || selectedCategory === 'Payments';
+      matchesCategory = activeCategory === 'ALL' || activeCategory === 'Payments';
 
       if (timeFilter === 'MONTH') matchesTime = item.date.startsWith(currentMonthStr);
       else if (timeFilter === 'WEEK') matchesTime = item.date >= oneWeekAgo;
@@ -283,14 +290,14 @@ export default function ActivityScreen() {
               <TouchableOpacity
                 style={[
                   styles.filterChip,
-                  selectedCategory === item && styles.filterChipActive,
+                  activeCategory === item && styles.filterChipActive,
                 ]}
                 onPress={() => setSelectedCategory(item)}
               >
                 <Text
                   style={[
                     styles.filterChipText,
-                    selectedCategory === item && styles.filterChipTextActive,
+                    activeCategory === item && styles.filterChipTextActive,
                   ]}
                 >
                   {item}

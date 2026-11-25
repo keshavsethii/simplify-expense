@@ -29,8 +29,10 @@ import {
   getAllMembers,
   addMemberToGroup,
   getExpensePaidMap,
+  getSettlements,
+  deleteSettlement,
 } from '../../db/queries';
-import { Group, Member, Expense, SimplifiedDebt } from '../../db/types';
+import { Group, Member, Expense, Settlement, SimplifiedDebt } from '../../db/types';
 import { simplifyDebts } from '../../utils/simplifyDebts';
 import { formatMoney } from '../../utils/currency';
 
@@ -43,6 +45,7 @@ export default function GroupDetailScreen() {
   const [balances, setBalances] = useState<{ member: Member; netBalance: number }[]>([]);
   const [simplifiedDebtsList, setSimplifiedDebtsList] = useState<SimplifiedDebt[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'expenses' | 'balances' | 'totals'>('expenses');
   const [allAvailableFriends, setAllAvailableFriends] = useState<Member[]>([]);
@@ -190,6 +193,9 @@ export default function GroupDetailScreen() {
       const exps = await getExpenses(id);
       setExpenses(exps);
 
+      const grpSettlements = await getSettlements(id);
+      setSettlements(grpSettlements);
+
       // Compute simplified debts
       const netBalancesMap: Record<string, number> = {};
       bals.forEach((b) => {
@@ -280,6 +286,20 @@ export default function GroupDetailScreen() {
     }
   };
 
+  const handleDeleteSettlement = (settlementId: string) => {
+    Alert.alert('Revert Payment', 'Remove this payment record and restore previous balances?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Revert',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteSettlement(settlementId);
+          loadGroupDetails();
+        },
+      },
+    ]);
+  };
+
   const uniqueCategories = Array.from(
     new Set(expenses.map((e) => e.category).filter((c): c is string => !!c && c.trim() !== ''))
   );
@@ -292,6 +312,40 @@ export default function GroupDetailScreen() {
       (e.category || '').toLowerCase() === selectedCategory.toLowerCase();
     return matchesSearch && matchesCategory;
   });
+
+  type GroupTimelineItem =
+    | { type: 'EXPENSE'; id: string; date: string; createdAt: string; expense: Expense }
+    | { type: 'SETTLEMENT'; id: string; date: string; createdAt: string; settlement: Settlement };
+
+  const filteredSettlements = settlements.filter((s) => {
+    if (selectedCategory !== 'ALL') return false;
+    if (!searchQuery.trim()) return true;
+    const fromM = members.find((m) => m.id === s.from_member_id);
+    const toM = members.find((m) => m.id === s.to_member_id);
+    const q = searchQuery.toLowerCase();
+    return (
+      (fromM?.name || '').toLowerCase().includes(q) ||
+      (toM?.name || '').toLowerCase().includes(q) ||
+      (s.notes || '').toLowerCase().includes(q)
+    );
+  });
+
+  const groupTimeline: GroupTimelineItem[] = [
+    ...filteredExpenses.map((e) => ({
+      type: 'EXPENSE' as const,
+      id: e.id,
+      date: e.date,
+      createdAt: e.created_at || '',
+      expense: e,
+    })),
+    ...filteredSettlements.map((s) => ({
+      type: 'SETTLEMENT' as const,
+      id: s.id,
+      date: s.date,
+      createdAt: s.created_at || '',
+      settlement: s,
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
 
   return (
     <View style={styles.container}>
@@ -488,7 +542,7 @@ export default function GroupDetailScreen() {
           </View>
 
           <FlatList
-            data={filteredExpenses}
+            data={groupTimeline}
             keyExtractor={(item) => item.id}
             refreshControl={
               <RefreshControl
@@ -499,7 +553,43 @@ export default function GroupDetailScreen() {
             }
             contentContainerStyle={styles.listPadding}
             renderItem={({ item }) => {
-              const paidMap = getExpensePaidMap(item);
+              if (item.type === 'SETTLEMENT') {
+                const s = item.settlement;
+                const fromM = members.find((m) => m.id === s.from_member_id);
+                const toM = members.find((m) => m.id === s.to_member_id);
+                const fromLabel = fromM?.is_user === 1 ? 'You' : fromM?.name || 'Unknown';
+                const toLabel = toM?.is_user === 1 ? 'You' : toM?.name || 'Unknown';
+                return (
+                  <View style={[styles.expenseCard, styles.settlementCardBg]}>
+                    <View style={styles.settlementDateBox}>
+                      <Ionicons name="checkmark-done" size={20} color="#1cc29f" />
+                    </View>
+                    <View style={styles.expenseInfo}>
+                      <Text style={styles.expenseDesc}>
+                        {fromLabel} paid {toLabel}
+                      </Text>
+                      <Text style={styles.expensePayer}>
+                        {s.date}
+                        {s.notes ? ` • ${s.notes}` : ' • Settlement payment'}
+                      </Text>
+                    </View>
+                    <View style={styles.settlementRightCol}>
+                      <Text style={styles.settlementAmountText}>
+                        {formatMoney(s.amount, s.currency)}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.revertBtn}
+                        onPress={() => handleDeleteSettlement(s.id)}
+                      >
+                        <Text style={styles.revertBtnText}>Revert</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              }
+
+              const exp = item.expense;
+              const paidMap = getExpensePaidMap(exp);
               const payerEntries = Object.entries(paidMap).filter(([, amt]) => amt > 0);
               const payerLabel =
                 payerEntries.length > 1
@@ -510,33 +600,33 @@ export default function GroupDetailScreen() {
                       })
                       .join(' & ')
                   : (() => {
-                      const payer = members.find((m) => m.id === item.paid_by_member_id);
+                      const payer = members.find((m) => m.id === exp.paid_by_member_id);
                       return payer?.is_user === 1 ? 'You' : payer?.name || 'Unknown';
                     })();
               return (
                 <TouchableOpacity
                   style={styles.expenseCard}
                   activeOpacity={0.7}
-                  onPress={() => router.push(`/expense-detail/${item.id}`)}
+                  onPress={() => router.push(`/expense-detail/${exp.id}`)}
                 >
                   <View style={styles.dateBox}>
                     <Text style={styles.dateMonth}>
-                      {new Date(item.date).toLocaleDateString('en-US', { month: 'short' })}
+                      {new Date(exp.date).toLocaleDateString('en-US', { month: 'short' })}
                     </Text>
                     <Text style={styles.dateDay}>
-                      {new Date(item.date).toLocaleDateString('en-US', { day: 'numeric' })}
+                      {new Date(exp.date).toLocaleDateString('en-US', { day: 'numeric' })}
                     </Text>
                   </View>
 
                   <View style={styles.expenseInfo}>
-                    <Text style={styles.expenseDesc}>{item.description}</Text>
+                    <Text style={styles.expenseDesc}>{exp.description}</Text>
                     <Text style={styles.expensePayer}>
-                      {payerLabel} paid {formatMoney(item.amount, item.currency)}
+                      {payerLabel} paid {formatMoney(exp.amount, exp.currency)}
                     </Text>
                   </View>
 
                   <View style={styles.expenseSplitType}>
-                    <Text style={styles.splitTypeBadge}>{item.split_type}</Text>
+                    <Text style={styles.splitTypeBadge}>{exp.split_type}</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -1460,5 +1550,37 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  settlementCardBg: {
+    backgroundColor: '#F0FDF9',
+    borderColor: '#A7F3D0',
+  },
+  settlementDateBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E8F8F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settlementRightCol: {
+    alignItems: 'flex-end',
+  },
+  settlementAmountText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1cc29f',
+  },
+  revertBtn: {
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: '#FEE2E2',
+  },
+  revertBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#EF4444',
   },
 });
